@@ -108,25 +108,48 @@ case "$TARGET_RID" in
     export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     WAF_ARGS+=(--std=c++17)
 
-    # ↓ Diagnostic block: dump toolchain visibility once so we have a concrete
-    # signal if waf still can't find g++. Cheap, removed once Windows builds
-    # are stable.
+    # ↓ Diagnostic block: previous run showed g++ IS on PATH but waf still
+    # claimed "g++ not found" — meaning the actual sanity *compile* fails. Run
+    # the same probe waf does (compile + link a trivial program) and dump the
+    # output so we can see why.
     echo "--- MSYS2 toolchain diagnostics ---"
     echo "MSYSTEM=${MSYSTEM:-<unset>}"
     echo "PATH=$PATH"
-    echo "which gcc: $(command -v gcc || echo NOTFOUND)"
     echo "which g++: $(command -v g++ || echo NOTFOUND)"
-    echo "g++ --version (head):"
-    g++ --version 2>&1 | head -3 || echo "g++ FAILED"
-    echo "ls /mingw64/bin/g++*:"
-    ls /mingw64/bin/g++* 2>&1 | head -5
-    echo "pacman -Q mingw-w64-x86_64-gcc:"
-    pacman -Q mingw-w64-x86_64-gcc 2>&1 | head -3
+    set +e
+    g++ --version 2>&1 | head -3
+    echo "[probe] g++ -dumpmachine:"; g++ -dumpmachine 2>&1
+    echo "[probe] g++ -print-search-dirs (libs line):"
+    g++ -print-search-dirs 2>&1 | grep -E "^libraries:" | head -1
+    echo "[probe] standalone compile + link of trivial C++:"
+    PROBE_DIR=$(mktemp -d)
+    cat > "$PROBE_DIR/probe.cxx" <<'PROBE'
+#include <iostream>
+#include <map>
+int main() { std::map<int,int> m; m[1] = 2; std::cout << m[1] << "\n"; return 0; }
+PROBE
+    g++ -std=c++17 -o "$PROBE_DIR/probe.exe" "$PROBE_DIR/probe.cxx" 2>&1
+    rc=$?
+    echo "[probe] compile rc=$rc"
+    if [ $rc -eq 0 ]; then
+      "$PROBE_DIR/probe.exe" 2>&1
+      echo "[probe] run rc=$?"
+    fi
+    set -e
+    rm -rf "$PROBE_DIR"
     echo "--- end diagnostics ---"
     ;;
 esac
 
-python3 ./waf configure "${WAF_ARGS[@]}"
+if ! python3 ./waf configure "${WAF_ARGS[@]}"; then
+  echo "==== waf configure failed — dumping build/config.log ===="
+  if [ -f build/config.log ]; then
+    cat build/config.log
+  else
+    echo "(no config.log produced)"
+  fi
+  exit 1
+fi
 python3 ./waf
 
 if [[ "$TARGET_RID" == win-* ]]; then
