@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
 using RayTagger.Core.Models;
@@ -17,6 +18,13 @@ namespace RayTagger.Core.Mapping;
 /// </remarks>
 public sealed class MappingRuleEngine : IMappingRuleEngine
 {
+    // Compile each (pattern, caseSensitive) combination at most once per engine lifetime — the
+    // .NET implicit regex cache holds 15 entries by default and thrashes for medium-sized rulesets.
+    // A scan of N tracks evaluates each rule's regex N times; one compile per ruleset reload is the
+    // right tradeoff. ConcurrentDictionary because rule evaluation runs from multiple pipeline
+    // workers once the parallel pipeline lands.
+    private readonly ConcurrentDictionary<(string Pattern, bool CaseSensitive), Regex> _regexCache = new();
+
     public MappingEvaluationResult Evaluate(
         ResolvedTrackTags tags,
         TrackTags? existing,
@@ -52,7 +60,7 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
 
     // -------- Predicate evaluation --------------------------------------------------------------
 
-    private static bool Matches(WhenClause? when, EvaluationContext ctx)
+    private bool Matches(WhenClause? when, EvaluationContext ctx)
     {
         // Both "key omitted" and "when: {}" are the catch-all form.
         if (when is null || IsEmptyClause(when))
@@ -118,13 +126,19 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         return false;
     }
 
-    private static bool MatchesRegex(string pattern, string? value, EvaluationContext ctx)
+    private bool MatchesRegex(string pattern, string? value, EvaluationContext ctx)
     {
         if (string.IsNullOrEmpty(value)) return false;
-        var options = ctx.Defaults.CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase;
-        // Pattern is user-supplied: a malicious pattern could ReDoS. Cap at a small timeout — a
-        // mapping rule is supposed to be cheap, never milliseconds.
-        return Regex.IsMatch(value, pattern, options | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        var compiled = _regexCache.GetOrAdd((pattern, ctx.Defaults.CaseSensitive), key =>
+        {
+            var options = key.CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase;
+            // Pattern is user-supplied: a malicious pattern could ReDoS. Cap at a small timeout —
+            // a mapping rule is supposed to be cheap, never milliseconds. Compiled because each
+            // rule evaluates N-tracks times per scan.
+            return new Regex(key.Pattern, options | RegexOptions.CultureInvariant | RegexOptions.Compiled,
+                TimeSpan.FromMilliseconds(100));
+        });
+        return compiled.IsMatch(value);
     }
 
     private static bool MatchesRange(NumericRange range, double? value)
@@ -161,15 +175,19 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         return required == KeyMode.Minor ? isMinor : !isMinor;
     }
 
-    private static bool MatchesPathGlob(string glob, string path)
+    private bool MatchesPathGlob(string glob, string path)
     {
         // Microsoft.Extensions.FileSystemGlobbing.Matcher is anchored to a base directory and
         // doesn't play nicely with absolute paths in unit tests. Translate the glob to a plain
-        // regex instead — deterministic, no FS dependency.
+        // regex instead — deterministic, no FS dependency. Cache the compiled regex so a scan
+        // of N tracks doesn't re-compile the same glob N times.
         var pattern = GlobToRegex(glob);
+        var compiled = _regexCache.GetOrAdd((pattern, CaseSensitive: false), key =>
+            new Regex(key.Pattern,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled,
+                TimeSpan.FromMilliseconds(100)));
         var normalised = path.Replace('\\', '/');
-        return Regex.IsMatch(normalised, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
-            TimeSpan.FromMilliseconds(100));
+        return compiled.IsMatch(normalised);
     }
 
     private static string GlobToRegex(string glob)

@@ -63,13 +63,31 @@ public sealed class NativeToolBootstrapper : INativeToolBootstrapper
         return File.Exists(path) ? path : null;
     }
 
-    public Task<string> EnsureAsync(string toolName, CancellationToken cancellationToken = default)
+    public async Task<string> EnsureAsync(string toolName, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
 
+        // The shared Task must not carry any single caller's cancellation — otherwise the first
+        // caller cancelling poisons the result for every other concurrent consumer. We start the
+        // work with a token tied to no caller and let each caller WaitAsync its own ct on the
+        // returned Task. Failures are evicted so transient errors don't pin a bad result for the
+        // lifetime of the process.
         var lazy = _inFlight.GetOrAdd(toolName,
-            key => new Lazy<Task<string>>(() => EnsureUncachedAsync(key, cancellationToken)));
-        return lazy.Value;
+            key => new Lazy<Task<string>>(
+                () => EnsureUncachedAsync(key, CancellationToken.None),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        try
+        {
+            return await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (lazy.Value.IsFaulted)
+        {
+            // A faulted Task stays pinned in _inFlight forever otherwise — drop it so the next
+            // EnsureAsync call retries from scratch instead of replaying the same failure.
+            _inFlight.TryRemove(KeyValuePair.Create(toolName, lazy));
+            throw;
+        }
     }
 
     private async Task<string> EnsureUncachedAsync(string toolName, CancellationToken cancellationToken)

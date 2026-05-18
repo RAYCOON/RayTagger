@@ -84,9 +84,47 @@ public sealed class MusicBrainzProvider : IMetadataProvider
     private static string? BuildSearchUri(LookupQuery query)
     {
         if (string.IsNullOrWhiteSpace(query.Artist) || string.IsNullOrWhiteSpace(query.Title)) return null;
-        var artist = Uri.EscapeDataString(query.Artist);
-        var title = Uri.EscapeDataString(query.Title);
+        var artist = Uri.EscapeDataString(EscapeLucene(query.Artist));
+        var title = Uri.EscapeDataString(EscapeLucene(query.Title));
         return $"ws/2/recording/?query=artist:\"{artist}\"%20AND%20recording:\"{title}\"&fmt=json&limit=5";
+    }
+
+    /// <summary>
+    /// MusicBrainz wraps Lucene; the embedded values run inside double-quoted phrases but the
+    /// special chars listed below still need a leading backslash, otherwise an artist named
+    /// e.g. <c>"AC/DC"</c>, <c>"Wu-Tang"</c>, or anything with parens / colons / wildcards
+    /// produces a 400 or an empty result set. URL-escaping alone doesn't help — Lucene operates
+    /// on the decoded query.
+    /// </summary>
+    private static string EscapeLucene(string raw)
+    {
+        // Lucene specials per the Apache Lucene query-syntax reference:
+        //   + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+        // Backslash is escaped first to keep us from double-escaping the escapes we add.
+        var sb = new System.Text.StringBuilder(raw.Length);
+        foreach (var c in raw)
+        {
+            switch (c)
+            {
+                case '\\':
+                case '+': case '-': case '!': case '(': case ')':
+                case '{': case '}': case '[': case ']':
+                case '^': case '"': case '~': case '*': case '?':
+                case ':': case '/':
+                    sb.Append('\\').Append(c);
+                    break;
+                case '&':
+                case '|':
+                    // && and || only carry meaning when doubled, but escaping a lone bare one
+                    // is safe and avoids a stateful look-ahead.
+                    sb.Append('\\').Append(c);
+                    break;
+                default:
+                    sb.Append(c);
+                    break;
+            }
+        }
+        return sb.ToString();
     }
 
     private static LookupResult ParseRecordingResponse(JsonElement root)

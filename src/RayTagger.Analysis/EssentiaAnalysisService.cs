@@ -48,7 +48,7 @@ public sealed class EssentiaAnalysisService : IEssentiaAnalysisService
         _executablePath = string.IsNullOrWhiteSpace(executablePath) ? Executable : executablePath;
     }
 
-    public Task<EssentiaResult?> RunAsync(TrackFile file, CancellationToken cancellationToken = default)
+    public async Task<EssentiaResult?> RunAsync(TrackFile file, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(file);
 
@@ -56,26 +56,22 @@ public sealed class EssentiaAnalysisService : IEssentiaAnalysisService
         // process, instead of returning a stale cached result.
         var key = $"{file.Path}|{file.LastModifiedUtc.Ticks}";
 
+        // The shared Task runs with no caller's cancellation — each caller WaitAsyncs its own ct
+        // on the returned Task so one caller's cancel doesn't propagate to siblings waiting for
+        // the same result. Failures are evicted so transient errors retry on the next call.
         var lazy = _cache.GetOrAdd(
             key,
             cacheKey => new Lazy<Task<EssentiaResult?>>(
-                () => RunWithCancellationEvictionAsync(cacheKey, file, cancellationToken),
+                () => RunEssentiaAsync(file, CancellationToken.None),
                 LazyThreadSafetyMode.ExecutionAndPublication));
 
-        return lazy.Value;
-    }
-
-    private async Task<EssentiaResult?> RunWithCancellationEvictionAsync(
-        string cacheKey, TrackFile file, CancellationToken cancellationToken)
-    {
         try
         {
-            return await RunEssentiaAsync(file, cancellationToken).ConfigureAwait(false);
+            return await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (Exception) when (lazy.Value.IsFaulted)
         {
-            // Don't pin a cancellation onto the cache — a later retry should get a fresh run.
-            _cache.TryRemove(cacheKey, out _);
+            _cache.TryRemove(KeyValuePair.Create(key, lazy));
             throw;
         }
     }
