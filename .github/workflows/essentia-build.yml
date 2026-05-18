@@ -126,7 +126,7 @@ jobs:
       - name: Build Essentia
         # Windows uses MSYS2's bash so the build script sees a Unix-y environment
         # (pacman-installed pkg-config, /mingw64/bin in PATH, cygpath available).
-        shell: ${{ startsWith(matrix.runner, 'windows') && 'msys2 {0}' || 'bash' }}
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         env:
           ESSENTIA_REPO: ${{ github.workspace }}/essentia
           STAGE_DIR: ${{ runner.temp }}/stage
@@ -135,7 +135,7 @@ jobs:
         run: bash .github/scripts/build-essentia.sh
 
       - name: Smoke-test the built binary
-        shell: ${{ startsWith(matrix.runner, 'windows') && 'msys2 {0}' || 'bash' }}
+        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
         env:
           STAGE_DIR_RAW: ${{ runner.temp }}/stage
           TARGET_RID: ${{ matrix.rid }}
