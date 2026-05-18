@@ -104,14 +104,19 @@ case "$TARGET_RID" in
     # would otherwise pick cl.exe — which can't find GCC-style <map> headers and
     # would produce a binary that couldn't link to /mingw64 libs anyway.
     #
-    # The `.exe` suffix is required: waf's find_program walks PATH and runs
-    # `os.access(<path>/<name>, os.X_OK)`. Without the suffix, Python on Windows
-    # reports the file as not-executable (Windows treats only PATHEXT-listed
+    # The `.exe` suffix on CC/CXX is required: waf's find_program walks PATH and
+    # runs `os.access(<path>/<name>, os.X_OK)`. Without the suffix, Python on
+    # Windows reports the file as not-executable (Windows only sees PATHEXT-listed
     # extensions as executable). Bash's `which` papers over this; waf does not.
+    #
+    # --check-{c,cxx}-compiler forces the toolchain CLASS (gcc/g++ semantics, not
+    # msvc). Without these flags waf still tries the msvc tool first and applies
+    # /nologo /help-style switches to whatever binary CC/CXX points at — even if
+    # that binary is g++ — which then makes ld choke on '/nologo' as a file path.
     export CC=gcc.exe
     export CXX=g++.exe
     export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    WAF_ARGS+=(--std=c++17)
+    WAF_ARGS+=(--std=c++17 --check-c-compiler=gcc --check-cxx-compiler=g++)
 
     # ↓ Diagnostic block: previous run showed g++ IS on PATH but waf still
     # claimed "g++ not found" — meaning the actual sanity *compile* fails. Run

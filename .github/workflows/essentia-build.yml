@@ -96,9 +96,9 @@ jobs:
         with:
           msystem: MINGW64
           update: true
+          # tar + git are part of the setup-msys2 bootstrap — listing them here
+          # gives "is up to date — skipping" noise without changing the install.
           install: >-
-            git
-            tar
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-eigen3
