@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RayTagger.Analysis;
 using RayTagger.Analysis.Bootstrap;
@@ -58,29 +59,34 @@ internal static class ScanHandler
         ApplyCliOverrides(options, dryRun: dryRun, write: write);
 
         using var loggerFactory = SerilogSetup.Build(options.Logging, verboseOverride: verbose);
-        var pipelineLogger = loggerFactory.CreateLogger<TagPipeline>();
 
-        var reader = new TagLibTagReader();
-        var backupWriter = new BackupSidecarWriter();
-        var writer = new TagLibTagWriter(reader, backupWriter);
+        // The composer registers everything that doesn't depend on the loaded options. The
+        // remaining wiring (analyzers, providers) needs the options-derived bits and stays here.
+        var services = new ServiceCollection();
+        services.AddSingleton<ILoggerFactory>(loggerFactory);
+        services.AddLogging();
+        services.AddRayTaggerServices();
+        await using var serviceProvider = services.BuildServiceProvider();
 
-        var runner = new NativeProcessRunner(loggerFactory.CreateLogger<NativeProcessRunner>());
-        var probe = new AnalysisToolProbe(runner);
+        var runner = serviceProvider.GetRequiredService<NativeProcessRunner>();
+        var probe = serviceProvider.GetRequiredService<IAnalysisToolProbe>();
         var resolver = NativeToolsBootstrapFactory.BuildResolver(options.NativeTools, probe, loggerFactory, console);
         var analysisRunner = await BuildAnalysisRunnerAsync(
             options.Analysis, runner, resolver, loggerFactory, console, cancellationToken).ConfigureAwait(false);
 
-        var lookupRunner = BuildLookupRunner(options.Lookup, loggerFactory, console);
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+        var dataDirs = serviceProvider.GetRequiredService<IUserDataDirectoryProvider>();
+        var lookupRunner = BuildLookupRunner(options.Lookup, httpClientFactory, dataDirs, loggerFactory, console);
 
         var pipeline = new TagPipeline(
-            new FileDiscoveryService(),
-            new TagReaderAdapter(reader),
-            new TagWriterAdapter(writer),
+            serviceProvider.GetRequiredService<IFileDiscoveryService>(),
+            serviceProvider.GetRequiredService<ITagReaderAdapter>(),
+            serviceProvider.GetRequiredService<ITagWriterAdapter>(),
             analysisRunner,
             lookupRunner,
-            new MappingRuleEngine(),
-            new SortService(loggerFactory.CreateLogger<SortService>()),
-            pipelineLogger);
+            serviceProvider.GetRequiredService<IMappingRuleEngine>(),
+            serviceProvider.GetRequiredService<ISortService>(),
+            loggerFactory.CreateLogger<TagPipeline>());
 
         var renderer = new OutcomeRenderer(console);
 
@@ -301,13 +307,19 @@ internal static class ScanHandler
     /// provider is configured, returns the no-op runner so the pipeline stays online-optional.
     /// </summary>
     /// <remarks>
-    /// HttpClient ownership is intentionally the process: short-lived CLI invocation, ≤ 4 clients,
-    /// each lives for the duration of the scan and gets cleaned up by the runtime on exit. CA2000
-    /// suppressed for that reason — wiring IDisposable through the provider chain just to satisfy
-    /// the analyzer adds noise without changing runtime behaviour.
+    /// HttpClients now come from <see cref="IHttpClientFactory"/>; the
+    /// <see cref="ServiceCollectionComposer"/> registers each provider's named client with a
+    /// Polly resilience pipeline (retry, circuit-breaker, rate-limit-aware on 429/503 with
+    /// Retry-After honoured). Factory-managed handlers get pooled across calls, fix the
+    /// previous CA2000 dispose-leak concern, and prepare the lookup chain for Phase-6 watch
+    /// mode where HttpClients would otherwise leak per scan.
     /// </remarks>
-#pragma warning disable CA2000
-    private static ILookupRunner BuildLookupRunner(LookupOptions lookupOptions, ILoggerFactory loggerFactory, IAnsiConsole console)
+    private static ILookupRunner BuildLookupRunner(
+        LookupOptions lookupOptions,
+        IHttpClientFactory httpClientFactory,
+        IUserDataDirectoryProvider dataDirs,
+        ILoggerFactory loggerFactory,
+        IAnsiConsole console)
     {
         if (!lookupOptions.Enabled)
         {
@@ -318,31 +330,33 @@ internal static class ScanHandler
 
         if (!string.IsNullOrWhiteSpace(lookupOptions.ApiKeys.Acoustid))
         {
-            var client = MakeHttpClient("https://api.acoustid.org/");
-            providers.Add(new AcoustIdProvider(client, lookupOptions.ApiKeys.Acoustid,
+            providers.Add(new AcoustIdProvider(
+                httpClientFactory.CreateClient(ServiceCollectionComposer.AcoustIdHttpClient),
+                lookupOptions.ApiKeys.Acoustid,
                 loggerFactory.CreateLogger<AcoustIdProvider>()));
             console.MarkupLine("[green]✓[/] [bold]lookup[/] via [cyan]acoustid[/]");
         }
 
         // MusicBrainz needs no API key, only a descriptive User-Agent. Always available.
-        {
-            var client = MakeHttpClient("https://musicbrainz.org/");
-            providers.Add(new MusicBrainzProvider(client, loggerFactory.CreateLogger<MusicBrainzProvider>()));
-            console.MarkupLine("[green]✓[/] [bold]lookup[/] via [cyan]musicbrainz[/]");
-        }
+        providers.Add(new MusicBrainzProvider(
+            httpClientFactory.CreateClient(ServiceCollectionComposer.MusicBrainzHttpClient),
+            loggerFactory.CreateLogger<MusicBrainzProvider>()));
+        console.MarkupLine("[green]✓[/] [bold]lookup[/] via [cyan]musicbrainz[/]");
 
         if (!string.IsNullOrWhiteSpace(lookupOptions.ApiKeys.Discogs))
         {
-            var client = MakeHttpClient("https://api.discogs.com/");
-            providers.Add(new DiscogsProvider(client, lookupOptions.ApiKeys.Discogs,
+            providers.Add(new DiscogsProvider(
+                httpClientFactory.CreateClient(ServiceCollectionComposer.DiscogsHttpClient),
+                lookupOptions.ApiKeys.Discogs,
                 loggerFactory.CreateLogger<DiscogsProvider>()));
             console.MarkupLine("[green]✓[/] [bold]lookup[/] via [cyan]discogs[/]");
         }
 
         if (!string.IsNullOrWhiteSpace(lookupOptions.ApiKeys.Lastfm))
         {
-            var client = MakeHttpClient("https://ws.audioscrobbler.com/");
-            providers.Add(new LastFmProvider(client, lookupOptions.ApiKeys.Lastfm,
+            providers.Add(new LastFmProvider(
+                httpClientFactory.CreateClient(ServiceCollectionComposer.LastFmHttpClient),
+                lookupOptions.ApiKeys.Lastfm,
                 loggerFactory.CreateLogger<LastFmProvider>()));
             console.MarkupLine("[green]✓[/] [bold]lookup[/] via [cyan]lastfm[/]");
         }
@@ -352,27 +366,10 @@ internal static class ScanHandler
         {
             var cacheDir = !string.IsNullOrWhiteSpace(lookupOptions.Cache.Directory)
                 ? lookupOptions.Cache.Directory
-                : Path.Combine(new UserDataDirectoryProvider().GetCacheDirectory(), "lookup");
+                : Path.Combine(dataDirs.GetCacheDirectory(), "lookup");
             cache = new FileLookupCache(cacheDir, loggerFactory.CreateLogger<FileLookupCache>());
         }
 
         return new LookupRunner(providers, lookupOptions, cache, loggerFactory.CreateLogger<LookupRunner>());
-    }
-#pragma warning restore CA2000
-
-    private static HttpClient MakeHttpClient(string baseAddress)
-    {
-        // One HttpClient per scan invocation is fine: short-lived process, ≤ 4 instances, no
-        // DNS-staleness concern. MusicBrainz and Discogs require a descriptive User-Agent — set
-        // it here once instead of in every provider.
-        //
-        // 15s timeout (vs. .NET's 100s default): a lookup call that hasn't returned in 15 seconds
-        // is wedged; failing fast lets the per-provider rate-limiter keep the rest of the chain
-        // moving instead of stalling the whole scan on one bad endpoint. Full Polly resilience
-        // pipeline (retry + circuit-breaker via Microsoft.Extensions.Http.Resilience) is on the
-        // Phase-7 polish list — needs a DI-based HttpClientFactory wire-up to plug in cleanly.
-        var client = new HttpClient { BaseAddress = new Uri(baseAddress), Timeout = TimeSpan.FromSeconds(15) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("RayTagger/0.1 (+https://github.com/RAYCOON/raytagger)");
-        return client;
     }
 }
