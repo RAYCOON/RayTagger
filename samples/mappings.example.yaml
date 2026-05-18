@@ -1,0 +1,121 @@
+# RayTagger — mapping rules.
+# Rules are evaluated top-to-bottom. The first matching rule applies its
+# `set:` block to the in-flight ResolvedTrackTags. `on_match: continue` lets
+# later rules refine further; otherwise evaluation stops at the first hit.
+#
+# Rules with source `Rules` ALWAYS override `existing_tags_policy: skip_if_present` —
+# this is by design: rules are the user's explicit declarative intent.
+#
+# Predicate keys under `when:` — see docs/ARCHITECTURE.md §5 for the full list:
+#   genre:          ["Name1", "Name2"]      # any-of match
+#   genre:          ":missing:"             # field is null/empty
+#   genre:          ":any:"                 # field is any non-empty value
+#   genre_regex:    "(?i)^pattern$"
+#   subgenre / subgenre_regex (same sentinels supported)
+#   bpm:            { min: 100, max: 130 }  # skips rule if BPM is null
+#   key:            ["8A", "Am"]            # camelot or standard
+#   key_mode:       major | minor
+#   energy:         { min: 6, max: 10 }     # skips rule if energy is null
+#   artist / artist_regex
+#   path_glob:      "**/Promo/**"
+#   any_of / all_of / not
+#
+# Catch-all: `when: {}` (or omitting `when:` entirely) matches every file.
+# Useful as a final fallback rule.
+
+version: 1
+
+defaults:
+  on_match: stop
+  case_sensitive: false
+
+rules:
+
+  # ----- Tech House refinement (runs before generic House folding) ---------
+  - name: "Tech House — peak time"
+    when:
+      genre: ["House", "Tech House"]
+      bpm: { min: 122, max: 128 }
+      key_mode: minor
+    set:
+      genre: "Tech House"
+      subgenre: "Peak Time"
+
+  - name: "Tech House — driving"
+    when:
+      genre: ["House", "Tech House"]
+      bpm: { min: 128, max: 132 }
+    set:
+      genre: "Tech House"
+      subgenre: "Driving"
+
+  # ----- House family → Electronic ----------------------------------------
+  - name: "House family → Electronic"
+    when:
+      genre: ["House", "Deep House", "Soulful House", "Funky House", "Vocal House"]
+    set:
+      genre: "Electronic"
+      subgenre: "House"
+
+  - name: "Jazz House variants → House / Jazz"
+    when:
+      genre_regex: "(?i)^(jazz.?house|electronic.?jazz|nu.?jazz)$"
+    set:
+      genre: "House"
+      subgenre: "Jazz"
+
+  # ----- Techno family ----------------------------------------------------
+  - name: "Techno → Electronic / Techno"
+    when:
+      genre: ["Techno", "Minimal Techno", "Detroit Techno", "Hard Techno"]
+    set:
+      genre: "Electronic"
+      subgenre: "Techno"
+
+  # ----- Drum & Bass ------------------------------------------------------
+  - name: "D&B family"
+    when:
+      genre_regex: "(?i)^(drum.?(and|n|&).?bass|dnb|jungle|liquid|neurofunk)$"
+    set:
+      genre: "Electronic"
+      subgenre: "Drum & Bass"
+
+  # ----- Hip-Hop ----------------------------------------------------------
+  - name: "Hip-Hop family"
+    when:
+      any_of:
+        - genre: ["Hip-Hop", "Hip Hop", "Rap"]
+        - genre_regex: "(?i)^(trap|boom.?bap|conscious.?rap)$"
+    set:
+      genre: "Hip-Hop"
+      subgenre: ""
+
+  # ----- High-energy override (independent of upstream genre) -------------
+  - name: "Mark high-energy tracks"
+    when:
+      energy: { min: 9, max: 10 }
+    set:
+      tag.mood: "Peak Energy"
+    on_match: continue
+
+  # ----- Path-based override (e.g. a "Promo" folder gets its own tag) -----
+  - name: "Promo folder tag"
+    when:
+      path_glob: "**/Promo/**"
+    set:
+      tag.label: "Promo"
+    on_match: continue
+
+  # ----- Fallback for files without any genre after analysis + lookup -----
+  - name: "Default: still no genre → 'Unsorted'"
+    when:
+      genre: ":missing:"
+    set:
+      genre: "Unsorted"
+
+  # ----- Final catch-all example (commented; remove `#` to enable) -------
+  # - name: "Catch-all"
+  #   when: {}
+  #   set:
+  #     tag.tagger_processed: "true"
+  #   on_match: continue

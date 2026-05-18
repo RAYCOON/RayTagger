@@ -1,0 +1,58 @@
+# ---------- .NET ----------
+bin/
+obj/
+out/
+*.user
+*.suo
+*.cache
+*.pdb
+*.dll.config
+*.exe.config
+.vs/
+.idea/
+*.DotSettings.user
+project.lock.json
+artifacts/
+TestResults/
+coverage*.xml
+*.coverage
+*.trx
+
+# ---------- Rider / JetBrains ----------
+.idea/
+*.sln.iml
+
+# ---------- VS Code ----------
+.vscode/
+
+# ---------- OS noise ----------
+.DS_Store
+Thumbs.db
+
+# ---------- Tagger local state ----------
+# User secrets / API keys (must never be committed)
+samples/.env
+tagger.local.yaml
+mappings.local.yaml
+*.local.yaml
+
+# Local cache & fingerprint store
+.cache/
+~/.cache/tagger/
+
+# Logs
+*.log
+logs/
+
+# Embedded native tools downloaded at first run
+tools/runtime/
+
+# Test fixtures (audio samples often too big / copyrighted)
+tests/**/fixtures/audio/
+
+# Local DJ tracks used for end-to-end smoke tests — copyrighted, NEVER commit
+music/
+
+# Local Claude Code working state (skills, plans, agent caches)
+.claude/
+.claude-tagger.yaml

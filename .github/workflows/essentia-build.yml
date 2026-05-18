@@ -1,0 +1,202 @@
+name: Build Essentia native binaries
+
+# Re-builds essentia_streaming_extractor_music from MTG/essentia@master on a
+# monthly cadence and publishes per-RID tarballs as a Tagger release. The
+# corresponding `samples/native-tools.example.yaml` update is sent through
+# a bot PR rather than committed directly, so each manifest change still
+# passes review + the loader/bootstrapper tests before users get it.
+#
+# License note: the published binaries are AGPL-3.0 (Essentia's license).
+# Tagger itself stays Apache-2.0 because the binaries live on the release
+# page, not bundled inside the Tagger distribution archive. Each release
+# body links back to MTG/essentia at the exact commit SHA to satisfy the
+# AGPL source-offer requirement.
+
+on:
+  workflow_dispatch:
+    inputs:
+      essentia_ref:
+        description: "Git ref to build (default: master)"
+        default: "master"
+        required: false
+      dry_run:
+        description: "If true, build + upload artifacts but skip the release + PR"
+        type: boolean
+        default: false
+  schedule:
+    # First day of each month, 06:00 UTC. Catches upstream changes without
+    # hammering CI; users can always trigger a fresh build via workflow_dispatch.
+    - cron: "0 6 1 * *"
+
+permissions:
+  contents: write       # for creating releases
+  pull-requests: write  # for the manifest-update PR
+
+jobs:
+  build:
+    name: Build (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: osx-arm64
+            runner: macos-14
+          - rid: osx-x64
+            runner: macos-13
+          - rid: linux-x64
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout Tagger
+        uses: actions/checkout@v4
+
+      - name: Checkout Essentia
+        uses: actions/checkout@v4
+        with:
+          repository: MTG/essentia
+          ref: ${{ inputs.essentia_ref || 'master' }}
+          path: essentia
+          fetch-depth: 0  # build script reads commit metadata
+
+      - name: Install build deps (macOS)
+        if: startsWith(matrix.runner, 'macos')
+        run: |
+          brew update
+          brew install pkg-config eigen libyaml fftw ffmpeg libsamplerate libtag chromaprint dylibbundler
+
+      - name: Install build deps (Linux)
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              build-essential pkg-config \
+              libeigen3-dev libyaml-dev libfftw3-dev \
+              libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
+              libsamplerate0-dev libtag1-dev libchromaprint-dev \
+              python3 python3-pip
+
+      - name: Build Essentia
+        env:
+          ESSENTIA_REPO: ${{ github.workspace }}/essentia
+          STAGE_DIR: ${{ runner.temp }}/stage
+          TARGET_RID: ${{ matrix.rid }}
+          ESSENTIA_REF: ${{ inputs.essentia_ref || 'master' }}
+        run: bash .github/scripts/build-essentia.sh
+
+      - name: Smoke-test the built binary
+        run: |
+          STAGE="${{ runner.temp }}/stage"
+          ARCHIVE=$(ls "$STAGE"/essentia-*-${{ matrix.rid }}.tar.gz)
+          TEST_DIR=$(mktemp -d)
+          tar -C "$TEST_DIR" -xzf "$ARCHIVE"
+          BIN_DIR=$(find "$TEST_DIR" -name essentia_streaming_extractor_music -exec dirname {} \;)
+          "$BIN_DIR/essentia_streaming_extractor_music" 2>&1 | head -5
+          # exit 1 with usage banner is expected; > 2 means the binary crashed
+          set +e
+          "$BIN_DIR/essentia_streaming_extractor_music"
+          rc=$?
+          set -e
+          if [ $rc -gt 2 ]; then
+            echo "Smoke test failed — binary returned $rc"
+            exit 1
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: essentia-${{ matrix.rid }}
+          path: |
+            ${{ runner.temp }}/stage/essentia-*.tar.gz
+            ${{ runner.temp }}/stage/essentia-*.sha256
+            ${{ runner.temp }}/stage/essentia-*.commit-info.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish release + manifest PR
+    if: ${{ inputs.dry_run != true }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Tagger
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact tree
+        id: flatten
+        run: |
+          mkdir -p flat
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" -o -name "*.commit-info.txt" \) -exec cp {} flat/ \;
+          ls -la flat/
+          # All RIDs are expected to share the same commit; assert and capture it.
+          COMMIT_SHORTS=$(grep -h '^commit_short=' flat/*.commit-info.txt | sort -u)
+          if [ "$(echo "$COMMIT_SHORTS" | wc -l)" -ne 1 ]; then
+              echo "RIDs built different commits — refusing to publish"
+              echo "$COMMIT_SHORTS"
+              exit 1
+          fi
+          COMMIT_SHORT=$(echo "$COMMIT_SHORTS" | sed 's/^commit_short=//')
+          COMMIT_DATE=$(grep -h '^commit_date=' flat/*.commit-info.txt | sort -u | sed 's/^commit_date=//')
+          COMMIT_SHA=$(grep -h '^commit_sha=' flat/*.commit-info.txt | sort -u | sed 's/^commit_sha=//')
+          RELEASE_TAG="essentia-tools-${COMMIT_DATE}"
+          VERSION_LABEL="master-${COMMIT_DATE}-${COMMIT_SHORT}"
+          echo "commit_short=$COMMIT_SHORT" >> $GITHUB_OUTPUT
+          echo "commit_date=$COMMIT_DATE" >> $GITHUB_OUTPUT
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "version_label=$VERSION_LABEL" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.flatten.outputs.release_tag }}"
+          SHA="${{ steps.flatten.outputs.commit_sha }}"
+          NOTES_FILE=$(mktemp)
+          cat > "$NOTES_FILE" <<EOF
+          Auto-built Essentia binaries for Tagger's native-tools auto-bootstrap.
+
+          **Source:** MTG/essentia @ \`$SHA\`
+          **Built on:** $(date -u +%Y-%m-%d)
+
+          Each tarball contains \`essentia_streaming_extractor_music\` for the given platform plus its non-system runtime dependencies. The binaries are released under AGPL-3.0 (Essentia's license) — see https://github.com/MTG/essentia/tree/$SHA for source.
+          EOF
+          # If the tag was created earlier in the same month, upload to it; else create.
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" flat/*.tar.gz flat/*.sha256 --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" flat/*.tar.gz flat/*.sha256 \
+                --repo "${{ github.repository }}" \
+                --title "Essentia tools — ${{ steps.flatten.outputs.commit_date }}" \
+                --notes-file "$NOTES_FILE"
+          fi
+
+      - name: Update native-tools manifest
+        run: |
+          python3 .github/scripts/update-essentia-manifest.py \
+            --manifest samples/native-tools.example.yaml \
+            --version "${{ steps.flatten.outputs.version_label }}" \
+            --release-tag "${{ steps.flatten.outputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            flat/*.commit-info.txt
+
+      - name: Open manifest-update PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "build(essentia): refresh manifest to ${{ steps.flatten.outputs.version_label }}"
+          branch: "automation/essentia-${{ steps.flatten.outputs.commit_date }}"
+          base: main
+          delete-branch: true
+          title: "build(essentia): refresh native-tools manifest to ${{ steps.flatten.outputs.commit_short }}"
+          body: |
+            Auto-generated by `.github/workflows/essentia-build.yml`.
+
+            - Built MTG/essentia @ `${{ steps.flatten.outputs.commit_sha }}`
+            - Attached binaries to release `${{ steps.flatten.outputs.release_tag }}`
+            - Rewrote URL + SHA-256 for every RID in the matrix
+
+            Loader/bootstrapper tests will run via the standard CI pipeline. Merge after review.

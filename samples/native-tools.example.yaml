@@ -1,0 +1,132 @@
+# Native-tool manifest — used by Tagger's auto-bootstrap to download the
+# analysis binaries on first use, instead of forcing the user to install
+# them manually. Copy to `native-tools.yaml` next to your `tagger.yaml`
+# (or anywhere referenced by `native_tools.manifest_file` in tagger.yaml).
+#
+# IMPORTANT: This is the CONTRACT between Tagger and the binaries it
+# downloads. Every entry is verified by SHA-256 before extraction. If
+# upstream releases a new version, bump `version:` AND replace the hashes
+# — Tagger never trusts a download just because the URL looks familiar.
+#
+# How to generate a SHA-256 from a published download:
+#   curl -sL <URL> | shasum -a 256          # macOS / Linux
+#   (Get-FileHash -A SHA256 file).Hash.ToLower()   # Windows PowerShell
+#
+# Supported archive_format values: tar_gz, zip, none
+#   none       — URL points at the bare binary (no extraction)
+#   tar_gz     — .tar.gz archive; binary_path is the path WITHIN the archive
+#   zip        — .zip archive; binary_path is the path WITHIN the archive
+#
+# The keys under `tools:` MUST match the bare binary name Tagger looks up
+# (the same name an installed copy would have on PATH). The keys under
+# `sources:` are .NET runtime identifiers: osx-arm64, osx-x64, linux-x64,
+# linux-arm64, win-x64, win-arm64.
+
+schema_version: 1
+
+# Override the cache root. Empty/null = OS default:
+#   macOS    ~/Library/Application Support/RayTagger/tools
+#   Linux    ~/.local/share/RayTagger/tools
+#   Windows  %LOCALAPPDATA%\RayTagger\tools
+cache_directory: ""
+
+tools:
+
+  # --- Essentia (BPM, key, energy) ---------------------------------------------
+  # Upstream: https://essentia.upf.edu/documentation/extractors/
+  #
+  # NOTE: the MTG-hosted prebuilt binaries are version 2.1-beta2 from
+  # January 2020 — they work but lag behind master by several years and
+  # only cover three platforms. Apple Silicon (osx-arm64), Linux arm64
+  # and Windows x86_64 have no official prebuilt; users on those targets
+  # either run the x86_64 binary in compatibility mode (Rosetta / WoW64),
+  # install via Homebrew, or build from source (see docs/INSTALL.md).
+  #
+  # The binary inside the archive is named `streaming_extractor_music`
+  # (without the `essentia_` prefix). Tagger renames it to the canonical
+  # `essentia_streaming_extractor_music` when moving into the cache slot,
+  # so the bare-name probe / setup workflow keeps working.
+  essentia_streaming_extractor_music:
+    version: "2.1-beta2"
+    sources:
+      osx-x64:
+        url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-osx-x86_64.tar.gz"
+        sha256: "478644eb6aa5c6363dedf8c76c0749d617d0c534a79104ee737b0a1ca779efd0"
+        archive_format: tar_gz
+        binary_path: "essentia-extractors-v2.1_beta2/streaming_extractor_music"
+      linux-x64:
+        url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-linux-x86_64.tar.gz"
+        sha256: "b6aaaefab379cb6cc0a12d95865327813ecffa2a8a3d2ad37619456e9cfbaaa6"
+        archive_format: tar_gz
+        binary_path: "essentia-extractors-v2.1_beta2/streaming_extractor_music"
+      # Windows note: upstream only publishes a 32-bit (i686) build. It
+      # runs on 64-bit Windows via WoW64, so we wire it under BOTH win-x64
+      # (where Tagger usually runs) and win-x86 (32-bit hosts). If you
+      # have a self-built native 64-bit essentia_streaming_extractor_music.exe,
+      # host it on your own mirror and override the win-x64 entry here.
+      win-x64:
+        url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-win-i686.tar.gz"
+        sha256: "33033d86825f94ed1386604271b72f7cd9d7c470746016bb1e53c34f9451e7ee"
+        archive_format: tar_gz
+        binary_path: "essentia-extractors-v2.1_beta2/streaming_extractor_music.exe"
+      win-x86:
+        url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-win-i686.tar.gz"
+        sha256: "33033d86825f94ed1386604271b72f7cd9d7c470746016bb1e53c34f9451e7ee"
+        archive_format: tar_gz
+        binary_path: "essentia-extractors-v2.1_beta2/streaming_extractor_music.exe"
+      # The osx-arm64 entry below is auto-managed by
+      # `.github/workflows/essentia-build.yml`. Its initial URL + SHA-256
+      # are placeholders that fail on purpose — Tagger will refuse the
+      # download until the workflow has run once and replaced these values
+      # with the real GitHub-release artifact. Apple-Silicon users running
+      # Tagger BEFORE that first workflow run must either build from
+      # source (docs/INSTALL.md) or duplicate the osx-x64 entry here so
+      # the x86_64 build runs under Rosetta.
+      osx-arm64:
+        url: "https://github.com/RAYCOON/raytagger/releases/download/essentia-tools-pending/essentia-pending-osx-arm64.tar.gz"
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        archive_format: tar_gz
+        binary_path: "essentia_streaming_extractor_music"
+      #
+      # linux-arm64: no upstream prebuilt and the CI workflow doesn't
+      # cover it yet (no native arm64 GitHub Actions runner in the matrix).
+      # If you need it, run the build script on your own arm64 Linux host
+      # and host the tarball on a mirror you control.
+
+  # --- Chromaprint / fpcalc (acoustic fingerprint for AcoustID) ----------------
+  # Upstream: https://github.com/acoustid/chromaprint/releases
+  # Version 1.6.0 (Aug 2025) is the first release with native arm64 builds
+  # for both Linux and macOS — strongly preferred over 1.5.1.
+  fpcalc:
+    version: "1.6.0"
+    sources:
+      osx-arm64:
+        url: "https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-macos-arm64.tar.gz"
+        sha256: "2c6c837f57ab5ad330710dc296af4de62a51d3c14aa2309fe1afce2ab699bd35"
+        archive_format: tar_gz
+        binary_path: "chromaprint-fpcalc-1.6.0-macos-arm64/fpcalc"
+      osx-x64:
+        url: "https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-macos-x86_64.tar.gz"
+        sha256: "5898f2442220f4d82920b9eb11c35fc30d379b1ce9cb8b9f869f3365d2236e99"
+        archive_format: tar_gz
+        binary_path: "chromaprint-fpcalc-1.6.0-macos-x86_64/fpcalc"
+      linux-arm64:
+        url: "https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-linux-arm64.tar.gz"
+        sha256: "c8667f556f77d8ebbe08b75a968c0592bd2a67aaa696eff91715feb5083b1cd4"
+        archive_format: tar_gz
+        binary_path: "chromaprint-fpcalc-1.6.0-linux-arm64/fpcalc"
+      linux-x64:
+        url: "https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-linux-x86_64.tar.gz"
+        sha256: "946dc3eade645eb835c8d163c6bb354e092239988bff190b9c42589e8d5cf00a"
+        archive_format: tar_gz
+        binary_path: "chromaprint-fpcalc-1.6.0-linux-x86_64/fpcalc"
+      win-x64:
+        url: "https://github.com/acoustid/chromaprint/releases/download/v1.6.0/chromaprint-fpcalc-1.6.0-windows-x86_64.zip"
+        sha256: "30179d3d0dc4cc92f1a0995c1a2e523fb4867724c2ee6a6ceae474f8e4d6937a"
+        archive_format: zip
+        binary_path: "chromaprint-fpcalc-1.6.0-windows-x86_64/fpcalc.exe"
+      # No win-arm64 build upstream as of 1.6.0 — Windows-on-arm64 users
+      # can run the x64 build under emulation (x64 on arm64 has been a
+      # first-class scenario since Windows 11), but Tagger won't auto-bootstrap
+      # that fallback. Add an explicit entry pointing at the win-x64 archive
+      # if you want that behaviour.

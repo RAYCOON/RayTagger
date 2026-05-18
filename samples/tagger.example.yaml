@@ -1,0 +1,150 @@
+# RayTagger — main configuration.
+# Copy to ./tagger.yaml and adjust.
+#
+# Path normalisation (applied to every path value):
+#   "~" or "~/foo"        → user home (cross-platform)
+#   "./foo", "../foo"     → relative to THIS file's directory, not CWD
+#   Env-var placeholders  → use ${env:NAME} syntax (see api_keys section below for
+#                           live examples). Substituted at load time; load fails
+#                           loud with the YAML path if a required var is missing.
+#
+# Cache directory default (when lookup.cache.directory is empty) is OS-aware:
+#   macOS   ~/Library/Application Support/RayTagger/cache
+#   Linux   ~/.local/share/RayTagger/cache
+#   Windows %LOCALAPPDATA%\RayTagger\cache
+
+version: 1
+
+# --- 1. Scan -----------------------------------------------------------------
+scan:
+  source: "~/Music/incoming"        # root directory to walk
+  recursive: true
+  formats: [mp3, flac, aiff]        # extensions to include
+  include_globs: []                 # optional: limit further (e.g. ["**/*Promo*"])
+  exclude_globs:
+    - "**/.DS_Store"
+    - "**/iTunes/**"
+  parallelism: 4                    # concurrent files in analyze/lookup stages
+
+# --- 2. Reading existing tags ------------------------------------------------
+read:
+  # How to treat existing values on a track.
+  #   skip_if_present  — never overwrite a non-empty tag (safest)
+  #   fill_only_empty  — alias of skip_if_present
+  #   always_overwrite — replace whatever's there
+  existing_tags_policy: skip_if_present
+
+# --- 3. Audio analysis (offline, local binaries on PATH) ---------------------
+# BPM, key and energy all run through a single Essentia
+# `streaming_extractor_music` invocation per track — one fork+exec, three values.
+# Essentia's EDMA key profile is trained on Beatport material and outperforms the
+# Shaath profile (libKeyFinder) on DJ-oriented tracks; its rhythm tracker is more
+# robust against the half/double-time errors aubio is known for. Fingerprinting
+# stays on Chromaprint/fpcalc because AcoustID requires it.
+#
+# Each analyzer emits a confidence in [0,1]. Values below `min_confidence`
+# are dropped (existing tag preserved). Set to 0 to always trust the analyzer.
+#
+# Note on timeouts: bpm/key/energy share ONE Essentia run, so the effective
+# timeout is the MAX of the three values. Setting bpm.timeout_seconds=30 while
+# energy.timeout_seconds=60 still gives Essentia 60s — there's no way to abort
+# the BPM dimension early because all three come out of the same JSON.
+analysis:
+  bpm:
+    enabled: true
+    provider: essentia               # only essentia is supported
+    timeout_seconds: 60
+    min_confidence: 0.4              # bpm_histogram_first_peak_weight proxy
+  key:
+    enabled: true
+    provider: essentia               # uses tonal.key_edma (EDM-trained profile)
+    timeout_seconds: 60
+    min_confidence: 0.55
+    # Key notation is policy: TKEY is written in STANDARD notation per ID3
+    # spec; TXXX:CAMELOTKEY is written in Camelot. Both are written when key
+    # analysis is enabled — this option only controls CLI/log display.
+    display_notation: camelot        # camelot | standard
+  energy:
+    enabled: true
+    provider: essentia               # lowlevel.spectral_energy, log-mapped to 1-10
+    timeout_seconds: 60
+    scale: 1-10
+    min_confidence: 0.5
+  fingerprint:
+    enabled: true                    # required if lookup is enabled
+    provider: chromaprint            # shells out to `fpcalc`
+    timeout_seconds: 30
+    min_confidence: 0.0              # fingerprint is binary — present or not
+
+# --- 4. Online lookup (hybrid: works offline, enriches when online) ---------
+lookup:
+  enabled: true
+  online_required: false             # if true, fail when offline
+  providers:                         # order = priority
+    - acoustid                       # needs ACOUSTID_API_KEY
+    - musicbrainz                    # free; rate limit 1 req/s enforced
+    - discogs                        # needs DISCOGS_TOKEN
+    - lastfm                         # needs LASTFM_API_KEY
+  cache:
+    enabled: true
+    directory: ""                    # empty = OS-appropriate default (see header)
+    ttl_days: 30
+  api_keys:
+    acoustid: "${env:ACOUSTID_API_KEY}"
+    discogs:  "${env:DISCOGS_TOKEN}"
+    lastfm:   "${env:LASTFM_API_KEY}"
+
+# --- 5. Mapping rules --------------------------------------------------------
+mapping:
+  rules_file: "./mappings.yaml"
+
+# --- 6. Tag writing ----------------------------------------------------------
+write:
+  dry_run: false                     # CLI --dry-run overrides this
+  backup: true                       # write <file>.tagger.bak.yaml before changing
+
+  # Logical field → format-specific frame. Defaults shown; override to customise.
+  # Each value is a list — Tagger writes to all entries that apply to the file's
+  # format. Format prefixes: ID3 (MP3/AIFF), VORBIS (FLAC).
+  tag_fields:
+    genre:     ["ID3:TCON",              "VORBIS:GENRE"]
+    subgenre:  ["ID3:TXXX:SUBGENRE",     "VORBIS:SUBGENRE"]
+    bpm:       ["ID3:TBPM",              "VORBIS:BPM"]
+    key:       ["ID3:TKEY",              "VORBIS:INITIALKEY"]
+    camelot:   ["ID3:TXXX:CAMELOTKEY",   "VORBIS:CAMELOTKEY"]
+    energy:    ["ID3:TXXX:ENERGYLEVEL",  "VORBIS:ENERGYLEVEL"]
+
+# --- 7. Sort (optional) ------------------------------------------------------
+sort:
+  enabled: false
+  destination: "~/Music/library"
+  pattern: "{genre}/{subgenre?}/{artist} - {title}.{ext}"
+  conflict: rename                   # rename | skip | overwrite
+  preserve_source: false             # if true: copy instead of move
+
+# --- 8. Native tools (auto-bootstrap) ----------------------------------------
+# Tagger orchestrates two native binaries — `essentia_streaming_extractor_music`
+# and `fpcalc` — both of which the user would otherwise have to install
+# manually. When `auto_bootstrap: true`, Tagger checks PATH first; if nothing
+# is there it consults the manifest below, downloads + verifies + extracts
+# the right binary for the current platform, and caches it under
+#   <data-dir>/RayTagger/tools/<tool>/<version>/<rid>/
+# so subsequent runs are offline. See `samples/native-tools.example.yaml`.
+native_tools:
+  # Path to the manifest YAML. Empty = look for `native-tools.yaml` next to
+  # this file first, then next to the tagger executable. The manifest ships
+  # with Tagger; pointing at a custom path is the way to host an internal
+  # mirror without forking the project.
+  manifest_file: "./native-tools.yaml"
+  auto_bootstrap: true
+
+# --- 9. Logging --------------------------------------------------------------
+logging:
+  level: information                 # verbose | debug | information | warning | error
+  console: true
+  file:
+    enabled: true
+    directory: "./logs"
+  sqlite:
+    enabled: false
+    path: "./logs/tagger.db"         # uses Raycoon.Serilog.Sinks.SQLite

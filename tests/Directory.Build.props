@@ -1,0 +1,16 @@
+<Project>
+  <!-- Inherits from the root Directory.Build.props automatically; we only override the bits
+       that differ between src/ and tests/. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!-- CA1707: xUnit convention uses snake_case test names ("Does_X_when_Y") for readability.
+         The sibling Raycoon.Serilog.Sinks.SQLite project suppresses the same rule for the same
+         reason.
+         CA1849: tests routinely use synchronous IO for setup/teardown; async would obscure intent
+         without giving meaningful concurrency. -->
+    <NoWarn>$(NoWarn);CA1707;CA1849</NoWarn>
+    <!-- Test projects don't need to ship XML docs. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

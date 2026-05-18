@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RayTagger.Analysis/RayTagger.Analysis.csproj" />
+    <Project Path="src/RayTagger.Cli/RayTagger.Cli.csproj" />
+    <Project Path="src/RayTagger.Core/RayTagger.Core.csproj" />
+    <Project Path="src/RayTagger.Lookup/RayTagger.Lookup.csproj" />
+    <Project Path="src/RayTagger.Metadata/RayTagger.Metadata.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RayTagger.Analysis.Tests/RayTagger.Analysis.Tests.csproj" />
+    <Project Path="tests/RayTagger.Cli.Tests/RayTagger.Cli.Tests.csproj" />
+    <Project Path="tests/RayTagger.Core.Tests/RayTagger.Core.Tests.csproj" />
+    <Project Path="tests/RayTagger.Lookup.Tests/RayTagger.Lookup.Tests.csproj" />
+    <Project Path="tests/RayTagger.Metadata.Tests/RayTagger.Metadata.Tests.csproj" />
+  </Folder>
+</Solution>
