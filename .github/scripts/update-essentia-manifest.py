@@ -41,6 +41,7 @@ class BuildResult:
     commit_date: str
     archive: str
     sha256: str
+    binary_in_archive: str
 
     @classmethod
     def from_info_file(cls, path: Path) -> "BuildResult":
@@ -53,12 +54,19 @@ class BuildResult:
         for required in ("target_rid", "commit_short", "commit_date", "archive", "sha256"):
             if required not in fields:
                 raise ValueError(f"{path}: missing field '{required}'")
+        # binary_in_archive was added when Windows joined the matrix — fall back
+        # for older commit-info files so the script stays backward-compatible.
+        binary = fields.get("binary_in_archive")
+        if not binary:
+            binary = "essentia_streaming_extractor_music.exe" if fields["target_rid"].startswith("win-") \
+                else "essentia_streaming_extractor_music"
         return cls(
             rid=fields["target_rid"],
             commit_short=fields["commit_short"],
             commit_date=fields["commit_date"],
             archive=fields["archive"],
             sha256=fields["sha256"],
+            binary_in_archive=binary,
         )
 
 
@@ -184,7 +192,7 @@ def _replace_entry_fields(
         "url": f'"{new_url}"',
         "sha256": f'"{build.sha256}"',
         "archive_format": "tar_gz",
-        "binary_path": '"essentia_streaming_extractor_music"',
+        "binary_path": f'"{build.binary_in_archive}"',
     }
 
     replaced: set[str] = set()

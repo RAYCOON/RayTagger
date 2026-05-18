@@ -57,6 +57,11 @@ jobs:
           # are missing those symbols. Ubuntu 24.04 has FFmpeg 6.1.
           - rid: linux-x64
             runner: ubuntu-24.04
+          # Windows builds run inside MSYS2/MINGW64. The mingw-w64-x86_64-ffmpeg
+          # package tracks upstream FFmpeg so the same source compiles without the
+          # ch_layout / codecpar issues we hit on Ubuntu 22.04.
+          - rid: win-x64
+            runner: windows-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout Tagger
@@ -72,11 +77,35 @@ jobs:
 
       # Essentia's waf wscript does `import distutils.sysconfig`, which was removed
       # from the stdlib in Python 3.12. The macos-14 runner now defaults to Python 3.13,
-      # so we pin every runner to 3.11 where distutils is still bundled.
+      # so we pin every Unix runner to 3.11 where distutils is still bundled.
+      # Windows uses MSYS2's own Python (installed via setup-msys2 below) — that
+      # ships Python 3.11 / 3.12 with distutils-compatible setuptools, so we skip
+      # actions/setup-python there.
       - name: Set up Python 3.11
+        if: ${{ !startsWith(matrix.runner, 'windows') }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Set up MSYS2 (Windows)
+        if: startsWith(matrix.runner, 'windows')
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            tar
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-eigen3
+            mingw-w64-x86_64-libyaml
+            mingw-w64-x86_64-fftw
+            mingw-w64-x86_64-ffmpeg
+            mingw-w64-x86_64-libsamplerate
+            mingw-w64-x86_64-taglib
+            mingw-w64-x86_64-chromaprint
+            mingw-w64-x86_64-python
 
       - name: Install build deps (macOS)
         if: startsWith(matrix.runner, 'macos')
@@ -95,6 +124,9 @@ jobs:
               libsamplerate0-dev libtag1-dev libchromaprint-dev
 
       - name: Build Essentia
+        # Windows uses MSYS2's bash so the build script sees a Unix-y environment
+        # (pacman-installed pkg-config, /mingw64/bin in PATH, cygpath available).
+        shell: ${{ startsWith(matrix.runner, 'windows') && 'msys2 {0}' || 'bash' }}
         env:
           ESSENTIA_REPO: ${{ github.workspace }}/essentia
           STAGE_DIR: ${{ runner.temp }}/stage
@@ -103,16 +135,26 @@ jobs:
         run: bash .github/scripts/build-essentia.sh
 
       - name: Smoke-test the built binary
+        shell: ${{ startsWith(matrix.runner, 'windows') && 'msys2 {0}' || 'bash' }}
+        env:
+          STAGE_DIR_RAW: ${{ runner.temp }}/stage
+          TARGET_RID: ${{ matrix.rid }}
         run: |
-          STAGE="${{ runner.temp }}/stage"
-          ARCHIVE=$(ls "$STAGE"/essentia-*-${{ matrix.rid }}.tar.gz)
+          STAGE="$STAGE_DIR_RAW"
+          if [[ "$TARGET_RID" == win-* ]]; then
+            STAGE=$(cygpath -u "$STAGE")
+            BIN_NAME="essentia_streaming_extractor_music.exe"
+          else
+            BIN_NAME="essentia_streaming_extractor_music"
+          fi
+          ARCHIVE=$(ls "$STAGE"/essentia-*-"$TARGET_RID".tar.gz)
           TEST_DIR=$(mktemp -d)
           tar -C "$TEST_DIR" -xzf "$ARCHIVE"
-          BIN_DIR=$(find "$TEST_DIR" -name essentia_streaming_extractor_music -exec dirname {} \;)
-          "$BIN_DIR/essentia_streaming_extractor_music" 2>&1 | head -5
+          BIN_DIR=$(find "$TEST_DIR" -name "$BIN_NAME" -exec dirname {} \;)
+          "$BIN_DIR/$BIN_NAME" 2>&1 | head -5
           # exit 1 with usage banner is expected; > 2 means the binary crashed
           set +e
-          "$BIN_DIR/essentia_streaming_extractor_music"
+          "$BIN_DIR/$BIN_NAME"
           rc=$?
           set -e
           if [ $rc -gt 2 ]; then

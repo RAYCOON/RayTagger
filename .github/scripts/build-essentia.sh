@@ -25,12 +25,31 @@ set -euo pipefail
 ESSENTIA_REF="${ESSENTIA_REF:-master}"
 
 case "$TARGET_RID" in
-  osx-arm64|osx-x64|linux-x64) ;;
+  osx-arm64|osx-x64|linux-x64|win-x64) ;;
   *)
     echo "ERROR: unsupported TARGET_RID=$TARGET_RID" >&2
     exit 2
     ;;
 esac
+
+# On Windows we run inside MSYS2's bash; the GH Actions env hands us paths
+# in mixed Windows form (e.g. D:\a\raytagger\raytagger/essentia). Convert to
+# proper MSYS2/Unix form so quoting and globbing behave as expected.
+if [[ "$TARGET_RID" == win-* ]]; then
+  command -v cygpath >/dev/null 2>&1 || { echo "ERROR: cygpath not found — Windows build must run inside MSYS2"; exit 6; }
+  ESSENTIA_REPO=$(cygpath -u "$ESSENTIA_REPO")
+  STAGE_DIR=$(cygpath -u "$STAGE_DIR")
+fi
+
+# Portable SHA-256: macOS BSD has shasum, GNU/MSYS2 have sha256sum. Either works.
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA_CMD=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  SHA_CMD=(shasum -a 256)
+else
+  echo "ERROR: neither sha256sum nor shasum is available" >&2
+  exit 7
+fi
 
 mkdir -p "$STAGE_DIR"
 
@@ -65,12 +84,22 @@ case "$TARGET_RID" in
     # Ubuntu's stock libs work; just stay on the default toolchain.
     :
     ;;
+  win-x64)
+    # MSYS2 / MinGW64 toolchain. pkg-config files for all our deps live under
+    # /mingw64/lib/pkgconfig — pacman puts them there. Same C++17 reason as macOS.
+    export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    WAF_ARGS+=(--std=c++17)
+    ;;
 esac
 
 python3 ./waf configure "${WAF_ARGS[@]}"
 python3 ./waf
 
-BUILT_BIN="build/src/examples/essentia_streaming_extractor_music"
+if [[ "$TARGET_RID" == win-* ]]; then
+  BUILT_BIN="build/src/examples/essentia_streaming_extractor_music.exe"
+else
+  BUILT_BIN="build/src/examples/essentia_streaming_extractor_music"
+fi
 if [ ! -f "$BUILT_BIN" ]; then
   echo "ERROR: expected binary not found at $BUILT_BIN" >&2
   ls -la build/src/examples/ >&2 || true
@@ -95,31 +124,67 @@ popd >/dev/null
 PKG_NAME="essentia-${COMMIT_DATE}-${COMMIT_SHORT}-${TARGET_RID}"
 PKG_DIR="$STAGE_DIR/$PKG_NAME"
 mkdir -p "$PKG_DIR"
-cp "$ESSENTIA_REPO/$BUILT_BIN" "$PKG_DIR/essentia_streaming_extractor_music"
-chmod 0755 "$PKG_DIR/essentia_streaming_extractor_music"
 
-# On macOS, the binary references Homebrew dylib paths via LC_LOAD_DYLIB. Pull
-# every non-system dependency into a sibling lib/ directory and rewrite the
-# install names so the package is self-contained. `dylibbundler` is the standard
-# tool for this.
-if [[ "$TARGET_RID" == osx-* ]]; then
-  if ! command -v dylibbundler >/dev/null 2>&1; then
-    echo "ERROR: dylibbundler not on PATH. Install with: brew install dylibbundler" >&2
-    exit 5
-  fi
-  mkdir -p "$PKG_DIR/lib"
-  # -of: overwrite existing; -b: bundle; -d: dependencies dir; -p: rpath token
-  dylibbundler -of -b -x "$PKG_DIR/essentia_streaming_extractor_music" \
-               -d "$PKG_DIR/lib/" -p '@executable_path/lib/' >/dev/null
+if [[ "$TARGET_RID" == win-* ]]; then
+  BIN_NAME="essentia_streaming_extractor_music.exe"
+else
+  BIN_NAME="essentia_streaming_extractor_music"
 fi
+cp "$ESSENTIA_REPO/$BUILT_BIN" "$PKG_DIR/$BIN_NAME"
+chmod 0755 "$PKG_DIR/$BIN_NAME"
 
-# Tarball + SHA-256
+# --- Bundle dynamic dependencies ----------------------------------------------
+case "$TARGET_RID" in
+  osx-*)
+    # macOS: binary references Homebrew dylib paths via LC_LOAD_DYLIB. Pull every
+    # non-system dependency into a sibling lib/ directory and rewrite the install
+    # names so the package is self-contained.
+    if ! command -v dylibbundler >/dev/null 2>&1; then
+      echo "ERROR: dylibbundler not on PATH. Install with: brew install dylibbundler" >&2
+      exit 5
+    fi
+    mkdir -p "$PKG_DIR/lib"
+    dylibbundler -of -b -x "$PKG_DIR/$BIN_NAME" \
+                 -d "$PKG_DIR/lib/" -p '@executable_path/lib/' >/dev/null
+    ;;
+  win-x64)
+    # MinGW64 builds link dynamically against DLLs in /mingw64/bin. Copy every
+    # such DLL referenced by the executable (recursively) next to the .exe so the
+    # package is self-contained — Windows resolves DLLs from the .exe's directory
+    # before any other location, no rpath rewriting needed.
+    ldd "$PKG_DIR/$BIN_NAME" \
+      | awk '/=> \/mingw64\// { print $3 }' \
+      | while read -r dll; do
+          cp -n "$dll" "$PKG_DIR/"
+        done
+    # Resolve transitive deps until quiescent (libavcodec pulls libavutil etc.)
+    for _ in 1 2 3 4; do
+      added=0
+      for dll in "$PKG_DIR"/*.dll; do
+        [ -f "$dll" ] || continue
+        ldd "$dll" \
+          | awk '/=> \/mingw64\// { print $3 }' \
+          | while read -r dep; do
+              [ -f "$PKG_DIR/$(basename "$dep")" ] || { cp "$dep" "$PKG_DIR/"; }
+            done
+      done
+    done
+    ;;
+  linux-x64)
+    # --build-static plus glibc/libstdc++ is good enough; no extra bundling needed.
+    :
+    ;;
+esac
+
+# Tarball + SHA-256 (use detected SHA_CMD so it works on macOS/Linux/MSYS2 alike)
 ARCHIVE="$STAGE_DIR/${PKG_NAME}.tar.gz"
 tar -C "$STAGE_DIR" -czf "$ARCHIVE" "$PKG_NAME"
-SHA256="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+SHA256="$("${SHA_CMD[@]}" "$ARCHIVE" | awk '{print $1}')"
 echo "$SHA256  $(basename "$ARCHIVE")" > "${ARCHIVE}.sha256"
 
-# Commit info for downstream consumers
+# Commit info for downstream consumers (includes binary path inside the archive,
+# which differs between Windows .exe and POSIX builds — the manifest updater
+# uses this to emit the correct binary_path: in native-tools.yaml).
 cat > "$STAGE_DIR/${PKG_NAME}.commit-info.txt" <<EOF
 commit_sha=$COMMIT_SHA
 commit_short=$COMMIT_SHORT
@@ -128,6 +193,7 @@ commit_message=$COMMIT_MSG
 target_rid=$TARGET_RID
 archive=$(basename "$ARCHIVE")
 sha256=$SHA256
+binary_in_archive=$BIN_NAME
 EOF
 
 # Clean up the intermediate directory; consumers just want the tarball.
