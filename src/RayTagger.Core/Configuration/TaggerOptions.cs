@@ -76,9 +76,9 @@ public sealed class ReadOptions
 
 public sealed class AnalysisOptions
 {
-    public AnalyzerOptions Bpm { get; set; } = new() { Provider = "aubio", MinConfidence = 0.6 };
-    public KeyAnalyzerOptions Key { get; set; } = new() { Provider = "keyfinder-cli", MinConfidence = 0.55 };
-    public EnergyAnalyzerOptions Energy { get; set; } = new() { Provider = "rms", MinConfidence = 0.5 };
+    public AnalyzerOptions Bpm { get; set; } = new() { Provider = "essentia", MinConfidence = 0.4 };
+    public KeyAnalyzerOptions Key { get; set; } = new() { Provider = "essentia", MinConfidence = 0.55 };
+    public EnergyAnalyzerOptions Energy { get; set; } = new() { Provider = "essentia", MinConfidence = 0.5 };
     public AnalyzerOptions Fingerprint { get; set; } = new() { Provider = "chromaprint", MinConfidence = 0.0 };
 }
 

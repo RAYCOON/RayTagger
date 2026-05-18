@@ -53,7 +53,12 @@ public static class PathNormalizer
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (string.IsNullOrEmpty(home))
         {
-            return path;
+            // Silently leaving a literal `~` in the path propagates to filesystem calls that
+            // then fail far away from the config load with a confusing "file not found ~/foo"
+            // error. Fail loud here so the user sees the env problem immediately.
+            throw new InvalidOperationException(
+                $"Cannot expand '{path}': user-home directory is not set (Environment.SpecialFolder.UserProfile is empty). " +
+                "Set HOME (or USERPROFILE on Windows) or rewrite the path as absolute.");
         }
 
         return path.Length == 1

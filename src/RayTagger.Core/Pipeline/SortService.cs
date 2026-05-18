@@ -151,11 +151,14 @@ public sealed class SortService : ISortService
         var sourceFileName = Path.GetFileName(sourceAudio);
         var destDir = Path.GetDirectoryName(destAudio)!;
 
-        var sidecarPattern = $"{sourceFileName}.tagger.bak.*.yaml";
+        // Filename may legitimately contain glob meta (`*`, `?`, `[`); passing it as a search
+        // pattern would make Directory.EnumerateFiles match unrelated tracks. Enumerate the
+        // whole directory and StartsWith-filter — costs a directory listing but is correct.
+        var sidecarSuffixMarker = ".tagger.bak.";
         IEnumerable<string> sidecars;
         try
         {
-            sidecars = Directory.EnumerateFiles(sourceDir, sidecarPattern, SearchOption.TopDirectoryOnly);
+            sidecars = Directory.EnumerateFiles(sourceDir, "*", SearchOption.TopDirectoryOnly);
         }
         catch (DirectoryNotFoundException)
         {
@@ -165,9 +168,16 @@ public sealed class SortService : ISortService
         var destAudioFileName = Path.GetFileName(destAudio);
         foreach (var sidecar in sidecars)
         {
+            var name = Path.GetFileName(sidecar);
+            if (!name.StartsWith(sourceFileName + sidecarSuffixMarker, StringComparison.Ordinal)
+                || !name.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             // Rewrite the sidecar's filename so it stays paired with the renamed audio file:
             // `OldName.mp3.tagger.bak.X.yaml` → `NewName.mp3.tagger.bak.X.yaml`.
-            var sidecarSuffix = Path.GetFileName(sidecar)[sourceFileName.Length..];
+            var sidecarSuffix = name[sourceFileName.Length..];
             var destSidecar = Path.Combine(destDir, destAudioFileName + sidecarSuffix);
             try
             {

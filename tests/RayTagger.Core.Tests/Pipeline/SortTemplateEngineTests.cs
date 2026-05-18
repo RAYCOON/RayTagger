@@ -83,6 +83,42 @@ public class SortTemplateEngineTests
         path.Should().Be($"{expected}.mp3");
     }
 
+    // A tag value like "..." or "   " sanitises to an empty string after TrimEnd. Before the
+    // fix, that empty component slipped through and `string.Join('/', ["", "rest"])` produced
+    // a leading separator that Path.Combine treats as rooted on POSIX — silently moving files
+    // outside the user's sort destination. Regression guards against the path-traversal vector.
+    [Theory]
+    [InlineData("...", "_")]
+    [InlineData("   ", "_")]
+    [InlineData(".. ..", "_")]   // trims trailing dots+spaces — also collapses
+    [InlineData(". .", "_")]
+    public void Empty_after_sanitise_substitutes_underscore_not_traversal(string maliciousTitle, string expected)
+    {
+        var existing = new TrackTags(Title: maliciousTitle, Artist: "Artist");
+        var resolved = WithGenre("Rock");
+
+        var path = SortTemplateEngine.Render("{title}/{artist}.{ext}", existing, resolved, "mp3");
+
+        // The dangerous result would be "/Artist.mp3" — Path.Combine(dest, "/Artist.mp3")
+        // discards dest on POSIX. The safe result is "<placeholder>/Artist.mp3".
+        path.Should().Be(Path.Combine(expected, "Artist.mp3"));
+        path.Should().NotStartWith(Path.DirectorySeparatorChar.ToString());
+    }
+
+    [Fact]
+    public void Combining_with_destination_stays_under_destination_even_for_dot_title()
+    {
+        var existing = new TrackTags(Title: "...", Artist: "Artist");
+        var resolved = WithGenre("Rock");
+
+        var relative = SortTemplateEngine.Render("{title}/{artist}.{ext}", existing, resolved, "mp3");
+        var destination = OperatingSystem.IsWindows() ? @"C:\Music\Library" : "/Music/Library";
+        var fullPath = Path.GetFullPath(Path.Combine(destination, relative));
+
+        // The whole point: combined path must stay under the destination root.
+        fullPath.Should().StartWith(destination);
+    }
+
     [Fact]
     public void Renders_bpm_key_and_energy_from_resolved_tags()
     {

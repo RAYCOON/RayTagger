@@ -228,9 +228,20 @@ public sealed class NativeToolBootstrapper : INativeToolBootstrapper
 
     private static string LocateExtractedBinary(string extractDir, string binaryPathInArchive, string toolName)
     {
+        // Defence-in-depth: .NET 7+'s TarFile/ZipFile already reject entries that resolve outside
+        // the extraction root, but `binary_path` is a manifest field — confused-deputy risk if the
+        // manifest is ever loaded from an untrusted source. Resolve both paths and require the
+        // binary to live under extractDir before we trust it.
+        var canonicalExtractDir = Path.GetFullPath(extractDir);
+
         if (!string.IsNullOrWhiteSpace(binaryPathInArchive))
         {
-            var explicitPath = Path.Combine(extractDir, binaryPathInArchive);
+            var explicitPath = Path.GetFullPath(Path.Combine(extractDir, binaryPathInArchive));
+            if (!IsUnderRoot(explicitPath, canonicalExtractDir))
+            {
+                throw new NativeToolBootstrapException(
+                    $"binary_path '{binaryPathInArchive}' resolves outside the extraction directory — refusing.");
+            }
             if (File.Exists(explicitPath))
             {
                 return explicitPath;
@@ -240,13 +251,27 @@ public sealed class NativeToolBootstrapper : INativeToolBootstrapper
         }
 
         var expectedName = ResolveBinaryFileName(toolName);
-        var match = Directory.EnumerateFiles(extractDir, expectedName, SearchOption.AllDirectories).FirstOrDefault();
+        var match = Directory.EnumerateFiles(extractDir, expectedName, SearchOption.AllDirectories)
+            .Where(p => IsUnderRoot(Path.GetFullPath(p), canonicalExtractDir))
+            .FirstOrDefault();
         if (match is null)
         {
             throw new NativeToolBootstrapException(
                 $"Archive for tool '{toolName}' did not contain a file named '{expectedName}'. Set binary_path explicitly in the manifest.");
         }
         return match;
+    }
+
+    private static bool IsUnderRoot(string candidate, string root)
+    {
+        var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        var comparer = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return candidate.StartsWith(rootWithSep, comparer)
+            || string.Equals(candidate, root, comparer);
     }
 
     private static void MakeExecutable(string path)

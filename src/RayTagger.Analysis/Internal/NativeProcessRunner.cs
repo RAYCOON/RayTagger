@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Microsoft.Extensions.Logging;
 
 namespace RayTagger.Analysis.Internal;
@@ -46,6 +47,12 @@ public sealed class NativeProcessRunner
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
+            // Default is Console.OutputEncoding, which on Windows is the OEM/ANSI codepage
+            // (cp850/cp1252). Essentia/fpcalc emit UTF-8; non-ASCII bytes in error messages
+            // (file paths, ffmpeg complaints) would mojibake under cp1252. Force UTF-8 on
+            // both streams — harmless on macOS/Linux where it's already the default.
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
         };
         foreach (var arg in arguments)
         {

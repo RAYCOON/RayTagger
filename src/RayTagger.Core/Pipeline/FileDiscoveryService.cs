@@ -38,6 +38,10 @@ public sealed class FileDiscoveryService : IFileDiscoveryService
             ReturnSpecialDirectories = false,
             IgnoreInaccessible = true,
             MatchCasing = MatchCasing.PlatformDefault,
+            // Skip hidden + system directories so we don't pour time into .git, .Trash,
+            // node_modules-style trees and OS-marked junk. Anything the user intentionally
+            // hides isn't part of their music library.
+            AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
         };
 
         foreach (var path in Directory.EnumerateFiles(scan.Source, "*", enumerationOptions))

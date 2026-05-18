@@ -62,7 +62,9 @@ public sealed partial class EnvVarResolver
         if (missingList.Count > 0)
         {
             resolved = null;
-            missing = missingList;
+            // Dedup so the same variable referenced N times doesn't surface as N identical
+            // error lines. Preserve first-seen order so the user can match against the YAML.
+            missing = [.. missingList.Distinct(StringComparer.Ordinal)];
             return false;
         }
 

@@ -47,7 +47,10 @@ public static class SortTemplateEngine
         {
             var rendered = RenderComponent(component, ctx);
             if (rendered is null) continue;  // entire component collapsed (all-optional, all-empty)
-            renderedComponents.Add(rendered);
+            // Belt-and-braces: never let an empty string become a path component. An empty
+            // first component would make string.Join produce a leading separator that
+            // Path.Combine treats as rooted, escaping the sort destination on POSIX.
+            renderedComponents.Add(rendered.Length == 0 ? "_" : rendered);
         }
 
         if (renderedComponents.Count == 0)
@@ -90,7 +93,12 @@ public static class SortTemplateEngine
                 }
                 else
                 {
-                    sb.Append(SanitiseSegment(value));
+                    // Sanitise inside the loop so a placeholder whose value collapses to "" after
+                    // sanitisation (e.g. title = "...") becomes a safe single underscore rather
+                    // than disappearing. Empty would let Path.Combine treat a leading separator
+                    // as rooted and discard the sort destination on POSIX — a real traversal vector.
+                    var sanitised = SanitiseSegment(value);
+                    sb.Append(string.IsNullOrEmpty(sanitised) ? "_" : sanitised);
                     hadAnyRequiredOutput = true;
                 }
                 i = close + 1;
@@ -146,7 +154,9 @@ public static class SortTemplateEngine
             sb.Append(Array.IndexOf(ReservedChars, c) >= 0 ? '_' : c);
         }
         // Trim trailing dots and spaces — both are technically allowed by macOS/Linux but rejected
-        // by Windows (and Explorer hides trailing dots silently).
+        // by Windows (and Explorer hides trailing dots silently). Caller (RenderComponent)
+        // substitutes "_" when a placeholder value collapses to empty here; leaving the empty
+        // return path open keeps purely-literal template fragments rendering as-is.
         return sb.ToString().TrimEnd(' ', '.');
     }
 
