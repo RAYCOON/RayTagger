@@ -43,20 +43,31 @@ jobs:
             runner: macos-14
           - rid: osx-x64
             runner: macos-13
+          # Need FFmpeg 5.1+ for the ch_layout / av_opt_set_chlayout API the current
+          # Essentia source assumes. Ubuntu 22.04 ships FFmpeg 4.4 → libavcodec headers
+          # are missing those symbols. Ubuntu 24.04 has FFmpeg 6.1.
           - rid: linux-x64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout Tagger
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout Essentia
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: MTG/essentia
           ref: ${{ inputs.essentia_ref || 'master' }}
           path: essentia
           fetch-depth: 0  # build script reads commit metadata
+
+      # Essentia's waf wscript does `import distutils.sysconfig`, which was removed
+      # from the stdlib in Python 3.12. The macos-14 runner now defaults to Python 3.13,
+      # so we pin every runner to 3.11 where distutils is still bundled.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Install build deps (macOS)
         if: startsWith(matrix.runner, 'macos')
@@ -72,8 +83,7 @@ jobs:
               build-essential pkg-config \
               libeigen3-dev libyaml-dev libfftw3-dev \
               libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
-              libsamplerate0-dev libtag1-dev libchromaprint-dev \
-              python3 python3-pip
+              libsamplerate0-dev libtag1-dev libchromaprint-dev
 
       - name: Build Essentia
         env:
@@ -119,7 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Tagger
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
