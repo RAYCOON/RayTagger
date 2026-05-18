@@ -95,21 +95,29 @@
                 <DataGridTextColumn Header="Mood" Width="100" Binding="{Binding ProposedMood, FallbackValue=''}"/>
                 <DataGridTextColumn Header="Set" Width="100" Binding="{Binding ProposedSetPosition, FallbackValue=''}"/>
                 <DataGridTextColumn Header="Regeln" Width="*" Binding="{Binding AppliedRules, Converter={x:Static vm:JoinConverter.Instance}}"/>
-                <!-- Per-row Apply button. Command lives on ScanViewModel; we reach back via
-                     the window's DataContext so a row VM doesn't need to carry the coordinator
-                     reference. CanApply gates the button so already-written or unchanged rows
-                     can't be re-applied accidentally. -->
-                <DataGridTemplateColumn Header="" Width="110">
+                <!-- Per-row Aktion: Apply + Revert side by side. Commands live on
+                     ScanViewModel; we reach back via the window's DataContext so a row VM
+                     doesn't need to carry the coordinator reference. Each button gates on its
+                     own Can* property — Apply only for "Würde ändern" rows, Revert only when a
+                     sidecar is present. -->
+                <DataGridTemplateColumn Header="Aktion" Width="200">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
-                            <Button Content="Anwenden"
-                                    Padding="8,2"
-                                    VerticalAlignment="Center"
-                                    HorizontalAlignment="Center"
-                                    Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.ApplyRowCommand}"
-                                    CommandParameter="{Binding}"
-                                    IsEnabled="{Binding CanApply}"
-                                    ToolTip.Tip="{Binding ApplyError, FallbackValue='Schreibt diese Datei auf Disk.'}"/>
+                            <StackPanel Orientation="Horizontal" Spacing="4"
+                                        VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <Button Content="Anwenden"
+                                        Padding="8,2"
+                                        Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.ApplyRowCommand}"
+                                        CommandParameter="{Binding}"
+                                        IsEnabled="{Binding CanApply}"
+                                        ToolTip.Tip="{Binding ApplyError, FallbackValue='Schreibt diese Datei auf Disk.'}"/>
+                                <Button Content="Revert"
+                                        Padding="8,2"
+                                        Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.RevertRowCommand}"
+                                        CommandParameter="{Binding}"
+                                        IsEnabled="{Binding CanRevert}"
+                                        ToolTip.Tip="Stellt die zuletzt gesicherten Tags aus dem Sidecar wieder her."/>
+                            </StackPanel>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

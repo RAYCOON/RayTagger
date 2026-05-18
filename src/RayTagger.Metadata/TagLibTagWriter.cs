@@ -66,7 +66,11 @@ public sealed class TagLibTagWriter : ITagWriter
         // it there, then atomic-rename over the original. On macOS/Linux File.Move with
         // overwrite is rename(2) — atomic. On Windows File.Move uses MoveFileEx with
         // MOVEFILE_REPLACE_EXISTING, also atomic on the same volume.
-        var tempPath = path + ".tagger.tmp";
+        //
+        // TagLib.File.Create dispatches on the file extension (no magic-byte sniff in this code
+        // path), so the temp file must keep the original suffix — otherwise `.tagger.tmp` hits
+        // UnsupportedFormatException and the write blows up.
+        var tempPath = path + ".tagger.tmp" + Path.GetExtension(path);
         try
         {
             FsFile.Copy(path, tempPath, overwrite: true);

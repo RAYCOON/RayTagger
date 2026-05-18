@@ -99,6 +99,10 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
                 // dispatcher thread. Without this, large parallel scans hit cross-thread asserts.
                 // DispatcherOperation doesn't expose ConfigureAwait; awaiting raw is fine here
                 // because the continuation already runs on the UI thread after Invoke completes.
+                // Seed HasSidecar so the Revert button is enabled out of the gate for any
+                // file whose previous Apply left a sidecar behind (incl. across scan runs).
+                vm.HasSidecar = _coordinator.HasSidecar(outcome.File.Path);
+
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     Outcomes.Add(vm);
@@ -149,6 +153,8 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
             if (result.Success)
             {
                 row.EndApplySuccess();
+                // Apply just wrote a fresh sidecar — the Revert button should light up.
+                row.HasSidecar = true;
                 AppliedCount++;
                 StatusMessage = $"Angewendet: {row.FileName} ({result.WrittenFields.Count} Felder).";
             }
@@ -163,6 +169,40 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         {
             _logger.LogError(ex, "Apply failed for {Path}", row.Path);
             row.EndApplyFailure(ex.Message);
+            FailedCount++;
+        }
+    }
+
+    /// <summary>
+    /// Reverts a single row from its most recent backup-sidecar. Same shape as ApplyRowAsync —
+    /// explicit one-click action, no confirmation. The sidecar gets deleted after success so the
+    /// button greys out until another Apply produces a new backup.
+    /// </summary>
+    [RelayCommand]
+    private async Task RevertRowAsync(TrackOutcomeViewModel? row)
+    {
+        if (row is null || !row.CanRevert) return;
+
+        row.BeginRevert();
+        try
+        {
+            var result = await _coordinator.RevertAsync(row.Path).ConfigureAwait(true);
+            if (result.Success)
+            {
+                row.EndRevertSuccess();
+                StatusMessage = $"Wiederhergestellt: {row.FileName} ({result.WrittenFields.Count} Felder).";
+            }
+            else
+            {
+                row.EndRevertFailure(result.ErrorMessage ?? "Unbekannter Wiederherstellungsfehler.");
+                FailedCount++;
+                StatusMessage = $"Fehler bei Revert von {row.FileName}: {result.ErrorMessage}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Revert failed for {Path}", row.Path);
+            row.EndRevertFailure(ex.Message);
             FailedCount++;
         }
     }

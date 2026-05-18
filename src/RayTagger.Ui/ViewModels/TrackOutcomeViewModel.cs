@@ -45,7 +45,16 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanApply))]
+    [NotifyPropertyChangedFor(nameof(CanRevert))]
     private bool _isApplying;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRevert))]
+    private bool _isReverting;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRevert))]
+    private bool _hasSidecar;
 
     [ObservableProperty] private string? _applyError;
 
@@ -58,10 +67,13 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     [ObservableProperty] private string? _existingSetPosition;
 
     /// <summary>True iff this row has a pending change the user can apply.</summary>
-    public bool CanApply => !IsApplying && StatusLabel == "Würde ändern";
+    public bool CanApply => !IsApplying && !IsReverting && StatusLabel == "Würde ändern";
 
     /// <summary>True after a successful apply — drives the green check glyph + suppresses the button.</summary>
     public bool IsApplied => Status == PipelineStatus.Written;
+
+    /// <summary>True iff a backup-sidecar exists on disk and no Apply/Revert is in flight.</summary>
+    public bool CanRevert => HasSidecar && !IsApplying && !IsReverting;
 
     public TrackOutcomeViewModel(PipelineOutcome outcome, TrackTags existing)
     {
@@ -140,6 +152,36 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     public void EndApplyFailure(string error)
     {
         IsApplying = false;
+        Status = PipelineStatus.Failed;
+        StatusLabel = "Fehler";
+        ApplyError = error;
+    }
+
+    /// <summary>Mark the row "in progress" for a Revert operation.</summary>
+    public void BeginRevert()
+    {
+        ApplyError = null;
+        IsReverting = true;
+    }
+
+    /// <summary>
+    /// After a successful Revert: the file on disk now holds the snapshot values, but we don't
+    /// know what they were precisely without re-reading. Flip back to "Würde ändern" so the user
+    /// can re-scan to see the new (restored) Existing state, and clear HasSidecar because the
+    /// Revert deleted it. The status label reverts to "Reverted" briefly so they see feedback.
+    /// </summary>
+    public void EndRevertSuccess()
+    {
+        IsReverting = false;
+        HasSidecar = false;
+        Status = PipelineStatus.Skipped;  // Skipped is the closest neutral status — neither Written nor Failed.
+        StatusLabel = "Reverted";
+    }
+
+    /// <summary>Revert failed — show the error, keep HasSidecar true so the user can retry.</summary>
+    public void EndRevertFailure(string error)
+    {
+        IsReverting = false;
         Status = PipelineStatus.Failed;
         StatusLabel = "Fehler";
         ApplyError = error;

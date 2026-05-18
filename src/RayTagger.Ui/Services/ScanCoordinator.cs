@@ -6,6 +6,7 @@ using RayTagger.Core.Models;
 using RayTagger.Core.Pipeline;
 using RayTagger.Hosting;
 using RayTagger.Metadata;
+using FsFile = System.IO.File;
 
 namespace RayTagger.Ui.Services;
 
@@ -23,6 +24,7 @@ public sealed class ScanCoordinator
     private readonly IMappingRuleEngine _ruleEngine;
     private readonly ISortService _sortService;
     private readonly PipelineFactory _pipelineFactory;
+    private readonly SidecarRestoreService _sidecarRestore;
     private readonly UiToolStatusReporter _statusReporter;
     private readonly ILogger<ScanCoordinator> _logger;
     private readonly ILoggerFactory _loggerFactory;
@@ -40,6 +42,7 @@ public sealed class ScanCoordinator
         IMappingRuleEngine ruleEngine,
         ISortService sortService,
         PipelineFactory pipelineFactory,
+        SidecarRestoreService sidecarRestore,
         UiToolStatusReporter statusReporter,
         ILogger<ScanCoordinator> logger,
         ILoggerFactory loggerFactory)
@@ -50,6 +53,7 @@ public sealed class ScanCoordinator
         ArgumentNullException.ThrowIfNull(ruleEngine);
         ArgumentNullException.ThrowIfNull(sortService);
         ArgumentNullException.ThrowIfNull(pipelineFactory);
+        ArgumentNullException.ThrowIfNull(sidecarRestore);
         ArgumentNullException.ThrowIfNull(statusReporter);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(loggerFactory);
@@ -60,6 +64,7 @@ public sealed class ScanCoordinator
         _ruleEngine = ruleEngine;
         _sortService = sortService;
         _pipelineFactory = pipelineFactory;
+        _sidecarRestore = sidecarRestore;
         _statusReporter = statusReporter;
         _logger = logger;
         _loggerFactory = loggerFactory;
@@ -162,6 +167,125 @@ public sealed class ScanCoordinator
         // implicitly by picking a folder. The Apply / Apply-All workflow explicitly flips
         // DryRun=false inside <see cref="ApplyAsync"/> under the apply gate.
         options.Write.DryRun = true;
+    }
+
+    /// <summary>
+    /// Returns true if a backup-sidecar exists for the given audio file — used by the row VM
+    /// to decide whether the "Revert" button is enabled at scan-time.
+    /// </summary>
+    public bool HasSidecar(string audioPath) => _sidecarRestore.FindLatestSidecar(audioPath) is not null;
+
+    /// <summary>
+    /// Reverts a single file from its most recent backup-sidecar. Reads the YAML snapshot,
+    /// writes every field back as <see cref="TagFieldSource.Rules"/> so the writer treats it
+    /// as a forced overwrite (same semantics as <c>tagger restore</c>), then deletes the sidecar.
+    /// No fresh backup is taken — capturing the post-revert state would just snapshot the value
+    /// we're undoing.
+    /// </summary>
+    public async Task<ApplyResult> RevertAsync(string audioPath, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audioPath);
+        if (_lastOptions is null)
+        {
+            return new ApplyResult(Success: false, WrittenFields: [], ErrorMessage:
+                "Kein Scan zur Wiederherstellung verfügbar — bitte zuerst scannen.");
+        }
+
+        await _applyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var sidecarPath = _sidecarRestore.FindLatestSidecar(audioPath);
+            if (sidecarPath is null)
+            {
+                return new ApplyResult(Success: false, WrittenFields: [], ErrorMessage:
+                    "Keine Sicherungsdatei vorhanden.");
+            }
+
+            TrackTags snapshot;
+            try
+            {
+                snapshot = _sidecarRestore.Read(sidecarPath);
+            }
+            catch (SidecarRestoreException ex)
+            {
+                _logger.LogWarning(ex, "Sidecar read failed for {Path}", sidecarPath);
+                return new ApplyResult(Success: false, WrittenFields: [], ErrorMessage: ex.Message);
+            }
+
+            var resolved = SnapshotToResolved(snapshot);
+            var options = _lastOptions;
+            var savedDryRun = options.Write.DryRun;
+            var savedBackup = options.Write.Backup;
+            options.Write.DryRun = false;
+            options.Write.Backup = false;  // No nested backup — we're undoing the previous write.
+            try
+            {
+                var result = await Task.Run(
+                    () => _writer.Write(audioPath, resolved, options),
+                    cancellationToken).ConfigureAwait(false);
+
+                TryDeleteSidecar(sidecarPath);
+                _logger.LogInformation("Reverted {Path} from sidecar; {Count} fields restored",
+                    audioPath, result.WrittenFields.Count);
+                return new ApplyResult(Success: true, WrittenFields: result.WrittenFields, ErrorMessage: null);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or MetadataException)
+            {
+                _logger.LogWarning(ex, "Revert failed for {Path}", audioPath);
+                return new ApplyResult(Success: false, WrittenFields: [], ErrorMessage: ex.Message);
+            }
+            finally
+            {
+                options.Write.DryRun = savedDryRun;
+                options.Write.Backup = savedBackup;
+            }
+        }
+        finally
+        {
+            _applyGate.Release();
+        }
+    }
+
+    private void TryDeleteSidecar(string sidecarPath)
+    {
+        try
+        {
+            FsFile.Delete(sidecarPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Restore succeeded on the audio file — sidecar leftover is harmless cosmetics.
+            _logger.LogWarning(ex, "Could not remove sidecar {Path}", sidecarPath);
+        }
+    }
+
+    /// <summary>
+    /// Mirrors <c>RestoreHandler.ToResolvedTrackTags</c>: every snapshot field flows back as
+    /// <see cref="TagFieldSource.Rules"/> so the writer treats it as "must write, regardless of
+    /// policy". <see cref="TrackTags.Mood"/> / <see cref="TrackTags.SetPosition"/> stay
+    /// <see cref="ResolvedField.Empty{T}"/> when the snapshot has no value — protects pre-feature
+    /// sidecars from clearing fields they couldn't capture at backup time.
+    /// </summary>
+    private static ResolvedTrackTags SnapshotToResolved(TrackTags snapshot)
+    {
+        var custom = snapshot.Custom.ToDictionary(
+            kv => kv.Key,
+            kv => new ResolvedField<string>(kv.Value, TagFieldSource.Rules, 1.0),
+            StringComparer.OrdinalIgnoreCase);
+
+        return new ResolvedTrackTags(
+            Genre: new ResolvedField<string>(snapshot.Genre, TagFieldSource.Rules, 1.0),
+            SubGenre: new ResolvedField<string>(snapshot.SubGenre, TagFieldSource.Rules, 1.0),
+            Bpm: new ResolvedValueField<double>(snapshot.Bpm, TagFieldSource.Rules, 1.0),
+            Key: new ResolvedField<MusicalKey>(snapshot.Key, TagFieldSource.Rules, 1.0),
+            Energy: new ResolvedValueField<int>(snapshot.Energy, TagFieldSource.Rules, 1.0),
+            Mood: snapshot.Mood is null
+                ? ResolvedField.Empty<string>()
+                : new ResolvedField<string>(snapshot.Mood, TagFieldSource.Rules, 1.0),
+            SetPosition: snapshot.SetPosition is null
+                ? ResolvedField.Empty<string>()
+                : new ResolvedField<string>(snapshot.SetPosition, TagFieldSource.Rules, 1.0),
+            Custom: custom);
     }
 
     /// <summary>
