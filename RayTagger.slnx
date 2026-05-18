@@ -5,6 +5,7 @@
     <Project Path="src/RayTagger.Core/RayTagger.Core.csproj" />
     <Project Path="src/RayTagger.Lookup/RayTagger.Lookup.csproj" />
     <Project Path="src/RayTagger.Metadata/RayTagger.Metadata.csproj" />
+    <Project Path="src/RayTagger.Ui/RayTagger.Ui.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/RayTagger.Analysis.Tests/RayTagger.Analysis.Tests.csproj" />

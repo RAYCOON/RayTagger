@@ -42,14 +42,20 @@
     <!-- Filesystem glob matching -->
     <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.0" />
 
-    <!-- Avalonia UI (placeholder project) -->
+    <!-- Avalonia UI -->
     <PackageVersion Include="Avalonia" Version="11.2.3" />
     <PackageVersion Include="Avalonia.Desktop" Version="11.2.3" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="11.2.3" />
     <PackageVersion Include="Avalonia.Fonts.Inter" Version="11.2.3" />
     <PackageVersion Include="Avalonia.ReactiveUI" Version="11.2.3" />
     <PackageVersion Include="Avalonia.Diagnostics" Version="11.2.3" />
+    <PackageVersion Include="Avalonia.Controls.DataGrid" Version="11.2.3" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <!-- Transitive override: Avalonia.Desktop's Linux backend pulls Tmds.DBus.Protocol 0.20.0,
+         which has GHSA-xrw6-gwf8-vvr9 (and the patch path landed in the 0.90+ series). Pin
+         transitively so the audit clears even on macOS / Windows builds where the package is
+         shipped but never executed. -->
+    <PackageVersion Include="Tmds.DBus.Protocol" Version="0.93.0" />
 
     <!-- Test dependencies (mirrors sibling project) -->
     <PackageVersion Include="coverlet.collector" Version="8.0.1" />

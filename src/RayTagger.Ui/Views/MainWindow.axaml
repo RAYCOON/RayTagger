@@ -1,0 +1,82 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:RayTagger.Ui.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+        x:Class="RayTagger.Ui.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="RayTagger"
+        Width="1100" Height="700"
+        MinWidth="800" MinHeight="500">
+
+    <!-- No design-time DataContext: the VM has constructor dependencies that the XAML designer
+         can't resolve. The Avalonia previewer renders against an empty DataContext, which is
+         fine for layout work. -->
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Top toolbar -->
+        <Border Grid.Row="0" Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                Padding="12,8" BorderThickness="0,0,0,1"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <Button Name="PickFolderButton" Content="Ordner wählen…"
+                        Click="OnPickFolderClick"/>
+                <TextBlock VerticalAlignment="Center"
+                           Text="{Binding Scan.SourceDirectory, FallbackValue='(noch kein Ordner)'}"
+                           TextTrimming="CharacterEllipsis"/>
+                <Button Content="Scan starten"
+                        Command="{Binding Scan.ScanCommand}"
+                        IsEnabled="{Binding !Scan.IsScanning}"/>
+                <Button Content="Abbrechen"
+                        Command="{Binding Scan.CancelCommand}"
+                        IsEnabled="{Binding Scan.IsScanning}"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Results grid -->
+        <DataGrid Grid.Row="1"
+                  ItemsSource="{Binding Scan.Outcomes}"
+                  CanUserSortColumns="True"
+                  CanUserResizeColumns="True"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal"
+                  RowHeight="28">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Datei" Width="240" Binding="{Binding FileName}"/>
+                <DataGridTextColumn Header="Status" Width="100" Binding="{Binding Status}"/>
+                <DataGridTextColumn Header="Genre (alt → neu)" Width="220">
+                    <DataGridTextColumn.Binding>
+                        <MultiBinding StringFormat="{}{0} → {1}">
+                            <Binding Path="ExistingGenre" FallbackValue=""/>
+                            <Binding Path="ProposedGenre" FallbackValue=""/>
+                        </MultiBinding>
+                    </DataGridTextColumn.Binding>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Sub-Genre" Width="160" Binding="{Binding ProposedSubGenre, FallbackValue=''}"/>
+                <DataGridTextColumn Header="BPM" Width="70" Binding="{Binding ProposedBpm}"/>
+                <DataGridTextColumn Header="Key" Width="80" Binding="{Binding ProposedKey}"/>
+                <DataGridTextColumn Header="Energy" Width="70" Binding="{Binding ProposedEnergy}"/>
+                <DataGridTextColumn Header="Regeln" Width="*" Binding="{Binding AppliedRules, Converter={x:Static vm:JoinConverter.Instance}}"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="2" Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                Padding="12,6" BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                           Text="{Binding Scan.StatusMessage, FallbackValue='Bereit.'}"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14">
+                    <TextBlock Text="{Binding Scan.ScannedCount, StringFormat='{}Gescannt: {0}'}"/>
+                    <TextBlock Text="{Binding Scan.ChangedCount, StringFormat='{}Änderungen: {0}'}"/>
+                    <TextBlock Text="{Binding Scan.FailedCount, StringFormat='{}Fehler: {0}'}"
+                               Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

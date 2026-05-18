@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>raytagger-ui</AssemblyName>
+    <RootNamespace>RayTagger.Ui</RootNamespace>
+    <Description>Cross-platform Avalonia desktop UI for RayTagger.</Description>
+    <IsPackable>false</IsPackable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!--
+      The Avalonia XAML compiler emits IL on .axaml files; those properties don't carry XML
+      doc comments, so leave doc generation off for this project. Also: BoundsLocator etc. ship
+      with CA1812 hits (instantiated only via XAML reflection) — suppress here rather than
+      polluting Directory.Build.props.
+    -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!--
+      UI-project local suppressions:
+        CA1812: instantiated via DI / XAML reflection, not via constructor reachability.
+        CA1707: View identifiers occasionally need underscores (XAML-generated names).
+        CA1515: every type in this project is an exe-internal — explicit 'internal' on every class
+                triples the diff without helping anyone. Suppress at project scope.
+        CA1001: ScanViewModel intentionally owns a CancellationTokenSource as a long-lived field;
+                making the VM IDisposable requires plumbing through every Avalonia binding. Until
+                we move to a scoped service lifetime this is the lower-friction choice.
+        CA1849: the CancellationTokenSource.Cancel() call site is inside an async method but the
+                cancel itself doesn't need awaiting; the analyzer's CancelAsync push isn't worth
+                the API churn.
+    -->
+    <NoWarn>$(NoWarn);CA1812;CA1707;CA1515;CA1001;CA1849</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="Avalonia.ReactiveUI" />
+    <PackageReference Include="Avalonia.Diagnostics" Condition="'$(Configuration)' == 'Debug'" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" />
+    <!-- Pinned to suppress the transitive Tmds.DBus.Protocol 0.20.0 CVE pulled in by
+         Avalonia.Desktop's Linux backend. -->
+    <PackageReference Include="Tmds.DBus.Protocol" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Extensions.Hosting" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.File" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RayTagger.Core\RayTagger.Core.csproj" />
+    <ProjectReference Include="..\RayTagger.Metadata\RayTagger.Metadata.csproj" />
+    <ProjectReference Include="..\RayTagger.Analysis\RayTagger.Analysis.csproj" />
+    <ProjectReference Include="..\RayTagger.Lookup\RayTagger.Lookup.csproj" />
+  </ItemGroup>
+
+</Project>

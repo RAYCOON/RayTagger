@@ -95,14 +95,19 @@ Goal: optionally relocate files into a clean library tree.
 
 **Done:** 205 tests green. End-to-end smoke against the 7-track fixture set: scan + write + sort moved every file into `{Electronic|Tech House}/{House|Driving|Peak Time}/{Artist} - {Title}.{ext}`, sidecars travelled along, `raytagger restore` recovered the pre-write tags. Originals untouched (write-test-protocol followed).
 
-## Phase 6 — Avalonia UI
+## Phase 6 — Avalonia UI (in progress)
 
 Goal: cross-platform desktop frontend on top of the same `RayTagger.Core` pipeline.
 
-- [ ] `RayTagger.Ui` Avalonia project.
-- [ ] Folder picker → live scan → results grid with diff (existing vs proposed tags).
+- [x] `RayTagger.Ui` Avalonia project — Fluent theme, ReactiveUI bindings, CommunityToolkit.Mvvm
+      source-generated `ObservableObject` + `RelayCommand`, dedicated DI composer mirroring the
+      CLI (own `IHttpClientFactory` registrations with the same Polly resilience pipeline).
+- [x] Folder picker → live scan → results grid with diff (existing vs proposed tags) on a
+      dry-run pipeline run. Outcomes stream into an `ObservableCollection` via `Dispatcher.UIThread`.
 - [ ] Rule-set editor with live preview ("if I add this rule, here's what changes").
 - [ ] Apply/revert per row or batch.
+- [ ] Wire analyzers + online lookup (currently `NoopAnalysisRunner` / `NoopLookupRunner`).
+- [ ] Settings panel for tagger.yaml / mappings.yaml (load/save via the existing loaders).
 
 ## Phase 7 — Polish
 

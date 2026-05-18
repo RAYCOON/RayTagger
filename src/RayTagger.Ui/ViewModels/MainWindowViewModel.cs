@@ -1,0 +1,49 @@
+using Avalonia.Controls;
+using Avalonia.Platform.Storage;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
+
+namespace RayTagger.Ui.ViewModels;
+
+/// <summary>
+/// Root view-model. Currently a thin shell owning the <see cref="ScanViewModel"/> and the folder
+/// picker that feeds it. Will grow rule-editor / settings child VMs in later iterations.
+/// </summary>
+public sealed partial class MainWindowViewModel : ObservableObject
+{
+    private readonly ILogger<MainWindowViewModel> _logger;
+
+    public ScanViewModel Scan { get; }
+
+    public MainWindowViewModel(ScanViewModel scan, ILogger<MainWindowViewModel> logger)
+    {
+        ArgumentNullException.ThrowIfNull(scan);
+        ArgumentNullException.ThrowIfNull(logger);
+        Scan = scan;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Opens the platform folder picker (Avalonia routes to Cocoa/WinUI/Gtk per host). Selected
+    /// path becomes the scan source. Bound to a button click via x:Static reference to the
+    /// command name; the View injects its own <see cref="TopLevel"/> when invoking.
+    /// </summary>
+    [RelayCommand]
+    public async Task PickSourceFolderAsync(TopLevel? topLevel)
+    {
+        if (topLevel is null) return;
+
+        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Musik-Ordner auswählen",
+            AllowMultiple = false,
+        });
+
+        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } localPath)
+        {
+            Scan.SourceDirectory = localPath;
+            _logger.LogInformation("Source folder selected: {Path}", localPath);
+        }
+    }
+}
