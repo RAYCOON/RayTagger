@@ -46,9 +46,9 @@ A scan run is a directed pipeline. Each stage is a small unit with a single resp
    └──────────────────┘
 ```
 
-**Parallelism:** files flow through the pipeline via `System.Threading.Channels` with a bounded buffer per stage. `parallelism` in config sets the concurrency of stages 3 and 4 (the I/O- and CPU-heavy ones). Stages 6 and 7 run **sequentially** per directory to avoid filesystem races during sort.
+**Parallelism:** when `scan.parallelism > 1`, files flow through `System.Threading.Channels` with a producer task feeding a bounded work-channel (`4 × parallelism` slots) and N worker tasks pulling from it. Each worker runs the entire per-file pipeline end-to-end so Essentia subprocess + HTTP-lookup latency overlaps across tracks. Outcomes are yielded in **completion order**, not discovery order — the throughput trade-off. `parallelism = 1` keeps the simple sequential code path for deterministic ordering and debugging.
 
-**Per-file failure isolation:** an exception in any stage marks that file `Failed` with a structured error and continues with the next file. A summary is printed at the end and persisted to a run log.
+**Per-file failure isolation:** an exception in any stage marks that file `Failed` with a structured error and continues with the next file. Workers swallow per-file failures (the same `ShouldIsolate` allow-list as the sequential path) but fatal exceptions (cancellation, OOM, stack overflow) propagate. A summary is printed at the end and persisted to a run log.
 
 **Dry-run:** stages 6 and 7 short-circuit to a "would write … / would move …" emitter. Backups are not created.
 
@@ -165,7 +165,15 @@ public interface IMetadataProvider
 
 **Order is config-driven.** A provider chain merges into a single `LookupResult`. Conflicting genres become ranked `GenreCandidate`s — the mapping engine sees the full ranked list and picks via its rules.
 
-**Resilience:** each provider uses `HttpClient` via `IHttpClientFactory` with `Microsoft.Extensions.Http.Resilience` (Polly under the hood): retry on transient errors, circuit breaker, rate-limit awareness (MusicBrainz is 1 req/s, AcoustID is 3 req/s). When `online_required: false`, lookups fail open — pipeline continues with whatever local analysis produced.
+**Resilience:** each provider's HttpClient is registered via `IHttpClientFactory` in `ServiceCollectionComposer` and wrapped with `AddStandardResilienceHandler` from `Microsoft.Extensions.Http.Resilience` (Polly v8 under the hood):
+- 3 retries with exponential backoff + jitter on transient errors (5xx / 408 / network failures).
+- Rate-limit-aware backoff on 429/503; `Retry-After` header is honoured.
+- Circuit breaker on sustained failure to one upstream.
+- Per-attempt timeout 10s, total-request timeout 45s (each request can retry within that budget).
+
+Each provider also self-throttles via `RateLimiter` to the documented req/s floor (MusicBrainz 1.1s, AcoustID 350ms, Discogs 1.1s, Last.fm 200ms) — the Polly pipeline handles spikes, the self-throttle handles steady-state. When `online_required: false`, lookups fail open — pipeline continues with whatever local analysis produced.
+
+**AcoustID prerequisite:** the AcoustID endpoint refuses without `duration`. `TagLibTagReader` reads container-decoded duration via `TagLib# Properties.Duration` and threads it through `LookupQuery.DurationSeconds`. Without that, the chain falls through to MusicBrainz's free-text search instead of MBID-anchored lookup.
 
 **Cache:** lookup responses cached on disk, keyed by fingerprint or `artist|title|album`. TTL configurable. Honor `--no-cache` and `--refresh-cache`.
 
@@ -324,9 +332,22 @@ Backup:
 
 ### 6.3 Safety
 
-- Atomic write via TagLib# (it writes to a temp file and renames).
-- Pre-flight check: refuse to write if the file is currently held open by another process.
-- On any write exception, the sidecar backup remains so a `raytagger restore` command can roll it back. (Restore is a Phase 5 feature.)
+- **Atomic write.** Tagger copies the audio file to `<path>.tagger.tmp`, lets TagLib# rewrite that temp, then `File.Move` with overwrite atomically replaces the original. POSIX `rename(2)` and Windows `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING` are both atomic on the same volume — the reader either sees the old bytes or the new bytes, never a torn write.
+- **File-lock pre-flight.** Before backup or temp-staging, Tagger opens the file with `FileShare.None`. If another process holds it (DJ software previewing, an mp3 indexer scanning), the writer fails fast with a structured `MetadataException` mapped to a per-file `StageError` instead of letting TagLib# throw mid-save.
+- **Custom-field write-through.** `set: { tag.<name>: value }` rules write to TXXX (MP3/AIFF) and Vorbis (FLAC) frames under the description from the loaded `TagFieldMap`. Existing custom frames (ReplayGain, MBID, …) round-trip through `TrackTags.Custom` without modification.
+- **Sidecar safety.** On any write exception, the sidecar backup remains so `raytagger restore` can roll it back.
+
+### 6.4 `tag_fields` override
+
+`write.tag_fields` in `tagger.yaml` overrides the per-format frame name for the user-defined dimensions (sub-genre, Camelot key, energy). The token grammar:
+
+```
+ID3:<frame>                e.g. ID3:TBPM         (informational — standard frame fixed by spec)
+ID3:TXXX:<description>     e.g. ID3:TXXX:CAMELOTKEY   (override the TXXX description)
+VORBIS:<field>             e.g. VORBIS:CAMELOTKEY     (override the Vorbis field name)
+```
+
+Standard ID3v2 frames (TCON, TBPM, TKEY, TIT2, TPE1, TDRC) and their Vorbis equivalents (GENRE, BPM, INITIALKEY) are spec-fixed; listing them in the block is accepted but informational. `TagFieldMapBuilder` validates token syntax at config-load time and reports malformed entries as `ConfigurationError`s alongside other validation errors.
 
 ---
 
