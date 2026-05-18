@@ -1,8 +1,0 @@
-commit_sha=7e90d20b3965f334682930c9b02992c46d273717
-commit_short=7e90d20b
-commit_date=20260416
-commit_message=Update links to libsamplerate dependency
-target_rid=osx-arm64
-archive=essentia-20260416-7e90d20b-osx-arm64.tar.gz
-sha256=b4b4ec514e0ee034c9b12d7a0c78e2642204ad5788442892a3e24435c42eba3f
-binary_in_archive=essentia_streaming_extractor_music
