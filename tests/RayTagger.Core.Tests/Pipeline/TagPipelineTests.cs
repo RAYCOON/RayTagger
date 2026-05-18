@@ -103,9 +103,43 @@ public class TagPipelineTests
     private static TrackFile MakeTrackFile(string name) =>
         new($"/fake/{name}", AudioFormat.Mp3, 1024, DateTime.UtcNow);
 
-    private static TaggerOptions MakeOptions(bool dryRun) => new()
+    private static TaggerOptions MakeOptions(bool dryRun, int parallelism = 1) => new()
     {
-        Scan = new ScanOptions { Source = "/fake", Parallelism = 1 },
+        Scan = new ScanOptions { Source = "/fake", Parallelism = parallelism },
         Write = new WriteOptions { DryRun = dryRun },
     };
+
+    [Fact]
+    public async Task Parallel_pipeline_processes_all_files_and_isolates_per_file_failures()
+    {
+        // Reuse the per-file isolation guarantee but force the channel-based fan-out (parallelism > 1).
+        // The outcome ordering isn't deterministic — sort before asserting.
+        var files = Enumerable.Range(0, 12).Select(i => MakeTrackFile($"f{i}.mp3")).ToArray();
+        var discovery = Substitute.For<IFileDiscoveryService>();
+        discovery.EnumerateAsync(Arg.Any<ScanOptions>(), Arg.Any<CancellationToken>())
+            .Returns(AsAsync(files));
+
+        var reader = Substitute.For<ITagReaderAdapter>();
+        foreach (var file in files)
+        {
+            if (file.Path.Contains("f5", StringComparison.Ordinal))
+            {
+                reader.Read(file.Path).Returns<TrackTags>(_ => throw new InvalidDataException("synthetic"));
+            }
+            else
+            {
+                reader.Read(file.Path).Returns(TrackTags.Empty);
+            }
+        }
+
+        var writer = Substitute.For<ITagWriterAdapter>();
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, NullLogger<TagPipeline>.Instance);
+
+        var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true, parallelism: 4), new MappingRuleSet()));
+
+        outcomes.Should().HaveCount(12);
+        outcomes.Count(o => o.Status == PipelineStatus.Failed).Should().Be(1);
+        outcomes.Where(o => o.Status == PipelineStatus.Failed)
+            .Should().AllSatisfy(o => o.File.Path.Should().Contain("f5"));
+    }
 }

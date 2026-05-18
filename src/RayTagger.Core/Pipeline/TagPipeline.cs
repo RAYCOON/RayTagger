@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using RayTagger.Core.Configuration;
 using RayTagger.Core.Mapping;
@@ -80,11 +81,97 @@ public sealed class TagPipeline : ITagPipeline
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(rules);
 
-        await foreach (var file in _discovery.EnumerateAsync(options.Scan, cancellationToken).ConfigureAwait(false))
+        var parallelism = Math.Max(1, options.Scan.Parallelism);
+
+        // Parallelism = 1 keeps the simple sequential code-path for users who want deterministic
+        // ordering or who debug with breakpoints. Above 1 we kick the channel-based fan-out so
+        // the Essentia-subprocess and HTTP-lookup latency overlaps with CPU work on other tracks.
+        if (parallelism == 1)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return await ProcessFileAsync(file, options, rules, cancellationToken).ConfigureAwait(false);
+            await foreach (var file in _discovery.EnumerateAsync(options.Scan, cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return await ProcessFileAsync(file, options, rules, cancellationToken).ConfigureAwait(false);
+            }
+            yield break;
         }
+
+        await foreach (var outcome in RunParallelAsync(options, rules, parallelism, cancellationToken).ConfigureAwait(false))
+        {
+            yield return outcome;
+        }
+    }
+
+    /// <summary>
+    /// Bounded-channel fan-out. One producer task pulls discovered <see cref="TrackFile"/>s into
+    /// the work channel; N worker tasks pull from the work channel, process the file end-to-end,
+    /// and push the resulting <see cref="PipelineOutcome"/> into the output channel. The caller's
+    /// async-enumerator drains the output channel in completion order — *not* discovery order,
+    /// which is the cost users pay for the throughput win.
+    /// </summary>
+    /// <remarks>
+    /// We bound the work channel at 4 × parallelism so the producer doesn't run far ahead of the
+    /// workers (avoids holding a million <see cref="TrackFile"/> records in memory on huge
+    /// libraries). The output channel is unbounded — back-pressure on the consumer would stall
+    /// workers and re-introduce the sequential bottleneck.
+    /// </remarks>
+    private async IAsyncEnumerable<PipelineOutcome> RunParallelAsync(
+        TaggerOptions options,
+        MappingRuleSet rules,
+        int parallelism,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var workChannel = Channel.CreateBounded<TrackFile>(new BoundedChannelOptions(parallelism * 4)
+        {
+            SingleWriter = true,
+            SingleReader = false,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+        var outputChannel = Channel.CreateUnbounded<PipelineOutcome>(new UnboundedChannelOptions
+        {
+            SingleWriter = false,
+            SingleReader = true,
+        });
+
+        var producerTask = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var file in _discovery.EnumerateAsync(options.Scan, cancellationToken).ConfigureAwait(false))
+                {
+                    await workChannel.Writer.WriteAsync(file, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                workChannel.Writer.Complete();
+            }
+        }, cancellationToken);
+
+        var workerTasks = Enumerable.Range(0, parallelism).Select(_ => Task.Run(async () =>
+        {
+            await foreach (var file in workChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var outcome = await ProcessFileAsync(file, options, rules, cancellationToken).ConfigureAwait(false);
+                await outputChannel.Writer.WriteAsync(outcome, cancellationToken).ConfigureAwait(false);
+            }
+        }, cancellationToken)).ToArray();
+
+        var completionTask = Task.WhenAll(workerTasks).ContinueWith(
+            _ => outputChannel.Writer.Complete(),
+            TaskScheduler.Default);
+
+        await foreach (var outcome in outputChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            yield return outcome;
+        }
+
+        // Surface any worker / producer exception once the consumer has drained — keeps the
+        // failure mode the same as the sequential path (one bad file doesn't kill the scan, but
+        // a fatal error like a bug in TagMerger does propagate).
+        await producerTask.ConfigureAwait(false);
+        await completionTask.ConfigureAwait(false);
+        await Task.WhenAll(workerTasks).ConfigureAwait(false);
     }
 
     private async Task<PipelineOutcome> ProcessFileAsync(
