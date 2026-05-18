@@ -106,6 +106,12 @@ write:
   # Logical field → format-specific frame. Defaults shown; override to customise.
   # Each value is a list — Tagger writes to all entries that apply to the file's
   # format. Format prefixes: ID3 (MP3/AIFF), VORBIS (FLAC).
+  #
+  # User-overridable rows (the TXXX descriptions and Vorbis field names):
+  #   subgenre, camelot, energy
+  # Standard-frame rows (genre/bpm/key — TCON/TBPM/TKEY/INITIALKEY/GENRE/BPM)
+  # are listed for documentation; the writer always uses the canonical frame
+  # per spec. Listing a non-canonical standard frame yields a validation error.
   tag_fields:
     genre:     ["ID3:TCON",              "VORBIS:GENRE"]
     subgenre:  ["ID3:TXXX:SUBGENRE",     "VORBIS:SUBGENRE"]

@@ -23,8 +23,16 @@ internal static class TaggerOptionsValidator
         ValidateAnalysis(options.Analysis, errors);
         ValidateLookup(options.Lookup, errors);
         ValidateSort(options.Sort, errors);
+        ValidateWrite(options.Write, errors);
 
         return errors;
+    }
+
+    private static void ValidateWrite(WriteOptions write, List<ConfigurationError> errors)
+    {
+        // Parse the raw tag-fields dictionary into the typed map. Any token errors are recorded
+        // here; the typed map is assigned back so downstream stages don't re-parse.
+        write.TagFieldMap = TagFieldMapBuilder.Build(write.TagFields, errors);
     }
 
     private static void ValidateScan(ScanOptions scan, List<ConfigurationError> errors)

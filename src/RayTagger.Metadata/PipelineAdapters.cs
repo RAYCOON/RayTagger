@@ -38,7 +38,8 @@ public sealed class TagWriterAdapter : ITagWriterAdapter
 
         var writeOpts = new TagWriteOptions(
             DryRun: options.Write.DryRun,
-            Backup: options.Write.Backup);
+            Backup: options.Write.Backup,
+            TagFieldMap: options.Write.TagFieldMap);
 
         var result = _writer.Write(path, resolved, writeOpts);
         return new PipelineWriteResult(result.WrittenFields, result.BackupPath);

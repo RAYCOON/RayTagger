@@ -24,7 +24,11 @@ public interface ITagWriter
 }
 
 /// <summary>Options for a single write operation. Decoupled from the global <c>WriteOptions</c> POCO.</summary>
-public sealed record TagWriteOptions(bool DryRun, bool Backup, string? BackupDirectory = null);
+public sealed record TagWriteOptions(
+    bool DryRun,
+    bool Backup,
+    string? BackupDirectory = null,
+    RayTagger.Core.Configuration.TagFieldMap? TagFieldMap = null);
 
 /// <summary>Result of a write operation. Always returned, even on dry-run.</summary>
 public sealed record TagWriteResult(

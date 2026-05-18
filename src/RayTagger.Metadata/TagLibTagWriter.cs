@@ -1,3 +1,4 @@
+using RayTagger.Core.Configuration;
 using RayTagger.Core.Models;
 using RayTagger.Metadata.Internal;
 using FsFile = System.IO.File;
@@ -88,7 +89,7 @@ public sealed class TagLibTagWriter : ITagWriter
 
         try
         {
-            ApplyChanges(tagFile, resolved, fieldsToWrite);
+            ApplyChanges(tagFile, resolved, fieldsToWrite, options.TagFieldMap ?? TagFieldMap.Default);
             tagFile.Save();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -198,7 +199,11 @@ public sealed class TagLibTagWriter : ITagWriter
         return list;
     }
 
-    private static void ApplyChanges(TagLib.File file, ResolvedTrackTags resolved, IReadOnlyList<string> fields)
+    private static void ApplyChanges(
+        TagLib.File file,
+        ResolvedTrackTags resolved,
+        IReadOnlyList<string> fields,
+        TagFieldMap fieldMap)
     {
         foreach (var field in fields)
         {
@@ -208,17 +213,17 @@ public sealed class TagLibTagWriter : ITagWriter
                     FrameMapper.WriteGenre(file, resolved.Genre.Value);
                     break;
                 case nameof(TrackTags.SubGenre):
-                    FrameMapper.WriteSubGenre(file, resolved.SubGenre.Value);
+                    FrameMapper.WriteSubGenre(file, resolved.SubGenre.Value, fieldMap);
                     break;
                 case nameof(TrackTags.Bpm):
                     FrameMapper.WriteBpm(file, resolved.Bpm.Value);
                     break;
                 case nameof(TrackTags.Key):
                     FrameMapper.WriteStandardKey(file, resolved.Key.Value?.Standard);
-                    FrameMapper.WriteCamelotKey(file, resolved.Key.Value?.Camelot);
+                    FrameMapper.WriteCamelotKey(file, resolved.Key.Value?.Camelot, fieldMap);
                     break;
                 case nameof(TrackTags.Energy):
-                    FrameMapper.WriteEnergy(file, resolved.Energy.Value);
+                    FrameMapper.WriteEnergy(file, resolved.Energy.Value, fieldMap);
                     break;
                 default:
                     if (field.StartsWith("tag.", StringComparison.Ordinal))

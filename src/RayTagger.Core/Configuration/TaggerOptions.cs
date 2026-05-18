@@ -150,7 +150,20 @@ public sealed class WriteOptions
 {
     public bool DryRun { get; set; }
     public bool Backup { get; set; } = true;
+
+    /// <summary>
+    /// Raw YAML-side override of per-format frame names for each logical field. Parsed into a
+    /// typed <see cref="TagFieldMap"/> at load time via <see cref="TagFieldMapBuilder.Build"/>;
+    /// validation errors surface alongside other configuration errors. See
+    /// <c>samples/tagger.example.yaml</c> for the token syntax.
+    /// </summary>
     public Dictionary<string, List<string>> TagFields { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Parsed view of <see cref="TagFields"/>. Set by the loader; <see cref="TagFieldMap.Default"/>
+    /// when the user didn't override anything.
+    /// </summary>
+    public TagFieldMap TagFieldMap { get; set; } = TagFieldMap.Default;
 }
 
 public enum SortConflictPolicy
