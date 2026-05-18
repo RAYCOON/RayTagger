@@ -298,6 +298,8 @@ Multiple sibling keys inside `when` are implicit `all_of`.
 
 **TXXX frame choices** (`TXXX:CAMELOTKEY`, `TXXX:ENERGYLEVEL`, `TXXX:SUBGENRE`) follow conventions used by Traktor / Beatport / various DJ-tool ecosystems. Compatibility with Mixed In Key has *not* been verified on real fixtures yet — MIK's exact write behavior varies by version and includes comment-field writes in addition to (or instead of) TXXX frames. Treat as "DJ-tool-friendly", not "MIK drop-in" until a fixture test confirms otherwise.
 
+**Virtual DJ compatibility.** Virtual DJ reads the standard frames directly: `TBPM` for BPM, `TKEY` (standard notation, e.g. `Am`, `F#m`) for key, `TCON` for genre. These are exactly the frames Tagger writes by default per the table above — no VDJ-specific frame additions are required. VDJ ignores the extra `TXXX:CAMELOTKEY` / `TXXX:ENERGYLEVEL` frames Tagger writes (they don't conflict). Fixture round-trip with a current VDJ library is still pending Phase 7 polish, but the mapping is structurally correct.
+
 User can remap any logical field via the `tag_fields` block in `tagger.yaml`.
 
 ### 6.2 Write policy and field-source resolution
