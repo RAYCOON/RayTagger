@@ -39,11 +39,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # NOTE: osx-arm64 + linux-x64 are TEMPORARILY commented out while we
-          # iterate the win-x64 build. They're known-green from earlier runs;
-          # restore in the same commit that lands a working Windows build.
-          # - rid: osx-arm64
-          #   runner: macos-14
+          - rid: osx-arm64
+            runner: macos-14
           # osx-x64 (macos-13) is currently DISABLED. Reasons:
           #   1. GitHub is winding down macos-13 Intel runners; queues for private
           #      repos can sit for hours or never pick up.
@@ -58,8 +55,8 @@ jobs:
           # Need FFmpeg 5.1+ for the ch_layout / av_opt_set_chlayout API the current
           # Essentia source assumes. Ubuntu 22.04 ships FFmpeg 4.4 → libavcodec headers
           # are missing those symbols. Ubuntu 24.04 has FFmpeg 6.1.
-          # - rid: linux-x64
-          #   runner: ubuntu-24.04
+          - rid: linux-x64
+            runner: ubuntu-24.04
           # Windows builds run inside MSYS2/MINGW64. The mingw-w64-x86_64-ffmpeg
           # package tracks upstream FFmpeg so the same source compiles without the
           # ch_layout / codecpar issues we hit on Ubuntu 22.04.
@@ -186,11 +183,14 @@ jobs:
           TEST_DIR=$(mktemp -d)
           tar -C "$TEST_DIR" -xzf "$ARCHIVE"
           BIN_DIR=$(find "$TEST_DIR" -name "$BIN_NAME" -exec dirname {} \;)
+          # msys2 shell sets pipefail by default — the binary exits 1 with its
+          # usage banner, head exits 0, but pipefail propagates the 1 and `set -e`
+          # would abort. Turn both off before invoking.
+          set +eo pipefail
           "$BIN_DIR/$BIN_NAME" 2>&1 | head -5
-          set +e
           "$BIN_DIR/$BIN_NAME"
           rc=$?
-          set -e
+          set -eo pipefail
           if [ $rc -gt 2 ]; then
             echo "Smoke test failed — binary returned $rc"
             exit 1
