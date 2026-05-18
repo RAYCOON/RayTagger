@@ -47,7 +47,7 @@ tools:
   # `essentia_streaming_extractor_music` when moving into the cache slot,
   # so the bare-name probe / setup workflow keeps working.
   essentia_streaming_extractor_music:
-    version: "2.1-beta2"
+    version: "master-20260416-7e90d20b"
     sources:
       osx-x64:
         url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-osx-x86_64.tar.gz"
@@ -55,20 +55,20 @@ tools:
         archive_format: tar_gz
         binary_path: "essentia-extractors-v2.1_beta2/streaming_extractor_music"
       linux-x64:
-        url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-linux-x86_64.tar.gz"
-        sha256: "b6aaaefab379cb6cc0a12d95865327813ecffa2a8a3d2ad37619456e9cfbaaa6"
+        url: "https://github.com/RAYCOON/raytagger/releases/download/essentia-tools-20260416/essentia-20260416-7e90d20b-linux-x64.tar.gz"
+        sha256: "28b877109b1d8031b07282ef635218796dd6532b87dc1d50feb828aabfbf8342"
         archive_format: tar_gz
-        binary_path: "essentia-extractors-v2.1_beta2/streaming_extractor_music"
+        binary_path: "essentia_streaming_extractor_music"
       # Windows note: upstream only publishes a 32-bit (i686) build. It
       # runs on 64-bit Windows via WoW64, so we wire it under BOTH win-x64
       # (where Tagger usually runs) and win-x86 (32-bit hosts). If you
       # have a self-built native 64-bit essentia_streaming_extractor_music.exe,
       # host it on your own mirror and override the win-x64 entry here.
       win-x64:
-        url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-win-i686.tar.gz"
-        sha256: "33033d86825f94ed1386604271b72f7cd9d7c470746016bb1e53c34f9451e7ee"
+        url: "https://github.com/RAYCOON/raytagger/releases/download/essentia-tools-20260416/essentia-20260416-7e90d20b-win-x64.tar.gz"
+        sha256: "775a9ba6d883cd2125713e9179da91e8b86478ebb787c4d8466b8aa88599710f"
         archive_format: tar_gz
-        binary_path: "essentia-extractors-v2.1_beta2/streaming_extractor_music.exe"
+        binary_path: "essentia_streaming_extractor_music.exe"
       win-x86:
         url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-win-i686.tar.gz"
         sha256: "33033d86825f94ed1386604271b72f7cd9d7c470746016bb1e53c34f9451e7ee"
@@ -83,8 +83,8 @@ tools:
       # source (docs/INSTALL.md) or duplicate the osx-x64 entry here so
       # the x86_64 build runs under Rosetta.
       osx-arm64:
-        url: "https://github.com/RAYCOON/raytagger/releases/download/essentia-tools-pending/essentia-pending-osx-arm64.tar.gz"
-        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        url: "https://github.com/RAYCOON/raytagger/releases/download/essentia-tools-20260416/essentia-20260416-7e90d20b-osx-arm64.tar.gz"
+        sha256: "b4b4ec514e0ee034c9b12d7a0c78e2642204ad5788442892a3e24435c42eba3f"
         archive_format: tar_gz
         binary_path: "essentia_streaming_extractor_music"
       #
