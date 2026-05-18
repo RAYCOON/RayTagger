@@ -27,6 +27,12 @@ public sealed class ScanCoordinator
     private readonly ILogger<ScanCoordinator> _logger;
     private readonly ILoggerFactory _loggerFactory;
 
+    // Cached options + write-side lock used by ApplyAsync after a successful scan. Mutating
+    // `_lastOptions.Write.DryRun` under the lock keeps a single-row Apply and a Batch Apply All
+    // from racing each other when the user multi-clicks.
+    private TaggerOptions? _lastOptions;
+    private readonly SemaphoreSlim _applyGate = new(1, 1);
+
     public ScanCoordinator(
         IFileDiscoveryService discovery,
         ITagReaderAdapter reader,
@@ -73,6 +79,7 @@ public sealed class ScanCoordinator
         _statusReporter.Reset();
 
         var (options, rules) = LoadOrDefaults(sourceDirectory);
+        _lastOptions = options;  // Keep for ApplyAsync — same options used for the dry-run scan.
 
         var built = await _pipelineFactory.BuildAsync(options, _statusReporter, cancellationToken).ConfigureAwait(false);
 
@@ -152,9 +159,57 @@ public sealed class ScanCoordinator
     private static void ForceUiDryRun(TaggerOptions options)
     {
         // The UI is exploratory by design — never write on a scan that the user kicked off
-        // implicitly by picking a folder. The Apply / Apply-All workflow (next milestone)
-        // explicitly re-runs the writer.
+        // implicitly by picking a folder. The Apply / Apply-All workflow explicitly flips
+        // DryRun=false inside <see cref="ApplyAsync"/> under the apply gate.
         options.Write.DryRun = true;
+    }
+
+    /// <summary>
+    /// Writes the proposed tags for a single <see cref="PipelineOutcome"/> back to disk. Reuses
+    /// the resolved tag values from the dry-run scan — no re-read, no re-analyze, no re-lookup.
+    /// </summary>
+    /// <remarks>
+    /// Honours <c>write.backup</c> from the loaded config (sidecar YAML written before the tag
+    /// file is touched). Per-call <see cref="SemaphoreSlim"/> gate serialises concurrent Apply
+    /// calls so the temporary <c>DryRun</c> flip on the shared options instance is safe.
+    /// </remarks>
+    public async Task<ApplyResult> ApplyAsync(PipelineOutcome outcome, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+        if (_lastOptions is null)
+        {
+            return new ApplyResult(Success: false, WrittenFields: [], ErrorMessage:
+                "Kein Scan zur Anwendung verfügbar — bitte zuerst scannen.");
+        }
+
+        await _applyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var options = _lastOptions;
+            var savedDryRun = options.Write.DryRun;
+            options.Write.DryRun = false;
+            try
+            {
+                var result = await Task.Run(
+                    () => _writer.Write(outcome.File.Path, outcome.Resolved, options),
+                    cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation("Applied {Count} fields to {Path}", result.WrittenFields.Count, outcome.File.Path);
+                return new ApplyResult(Success: true, WrittenFields: result.WrittenFields, ErrorMessage: null);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                _logger.LogWarning(ex, "Apply failed for {Path}", outcome.File.Path);
+                return new ApplyResult(Success: false, WrittenFields: [], ErrorMessage: ex.Message);
+            }
+            finally
+            {
+                options.Write.DryRun = savedDryRun;
+            }
+        }
+        finally
+        {
+            _applyGate.Release();
+        }
     }
 
     /// <summary>
@@ -182,3 +237,11 @@ public sealed class ScanCoordinator
         return null;
     }
 }
+
+/// <summary>
+/// Outcome of a single <see cref="ScanCoordinator.ApplyAsync"/> call. <see cref="Success"/> is
+/// false when the file was inaccessible, locked, or the writer threw an IO/permission error; the
+/// row VM surfaces the message in its error badge.
+/// </summary>
+public sealed record ApplyResult(bool Success, IReadOnlyList<string> WrittenFields, string? ErrorMessage);
+

@@ -1,0 +1,27 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="RayTagger.Ui.Views.ConfirmationDialog"
+        Title="Bestätigen"
+        Width="420" Height="180"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <!-- Single-purpose modal: Title + body text + Ja/Abbrechen. Returned via DialogResult so the
+         caller can `await window.ShowDialog<bool>(owner)`. The body text is set from code-behind. -->
+    <Grid RowDefinitions="*,Auto" Margin="20">
+        <TextBlock Name="MessageBlock"
+                   Grid.Row="0"
+                   TextWrapping="Wrap"
+                   VerticalAlignment="Top"
+                   Margin="0,0,0,16"/>
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Spacing="8">
+            <Button Name="CancelButton" Content="Abbrechen" Click="OnCancelClick" MinWidth="80"/>
+            <Button Name="ConfirmButton" Content="Ja, anwenden" Click="OnConfirmClick"
+                    Classes="accent" MinWidth="120"/>
+        </StackPanel>
+    </Grid>
+</Window>

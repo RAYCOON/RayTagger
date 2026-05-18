@@ -389,6 +389,16 @@ public static class MappingRulesLoader
                 {
                     if (list[i] is string item)
                     {
+                        // Catch the common footgun: `genre: [":any:"]`. Sentinels are only
+                        // meaningful as a scalar (`genre: ":any:"`); inside a list they would be
+                        // taken as a literal genre named ":any:" and silently never match.
+                        if (item.Length > 0 && item[0] == ':' && item[^1] == ':')
+                        {
+                            errors.Add(new ConfigurationError(
+                                $"{pathPrefix}[{i}]",
+                                $"Sentinel '{item}' cannot appear in a list. Use `{pathPrefix.Split('.')[^1]}: \"{item}\"` (scalar) instead."));
+                            continue;
+                        }
                         values.Add(item);
                     }
                     else

@@ -28,10 +28,15 @@
                            TextTrimming="CharacterEllipsis"/>
                 <Button Content="Scan starten"
                         Command="{Binding Scan.ScanCommand}"
-                        IsEnabled="{Binding !Scan.IsScanning}"/>
+                        IsEnabled="{Binding !Scan.IsBusy}"/>
                 <Button Content="Abbrechen"
                         Command="{Binding Scan.CancelCommand}"
-                        IsEnabled="{Binding Scan.IsScanning}"/>
+                        IsEnabled="{Binding Scan.IsBusy}"/>
+                <Button Content="Alle anwenden"
+                        Classes="accent"
+                        Click="OnApplyAllClick"
+                        IsEnabled="{Binding !Scan.IsBusy}"
+                        ToolTip.Tip="Schreibt alle 'Würde ändern'-Zeilen auf Disk (mit Backup-Sidecar)."/>
             </StackPanel>
         </Border>
 
@@ -64,17 +69,17 @@
         </Border>
 
         <!-- Results grid -->
-        <DataGrid Grid.Row="2"
+        <DataGrid Grid.Row="2" Name="ResultsGrid"
                   ItemsSource="{Binding Scan.Outcomes}"
                   CanUserSortColumns="True"
                   CanUserResizeColumns="True"
                   AutoGenerateColumns="False"
                   IsReadOnly="True"
                   GridLinesVisibility="Horizontal"
-                  RowHeight="28">
+                  RowHeight="32">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Datei" Width="240" Binding="{Binding FileName}"/>
-                <DataGridTextColumn Header="Status" Width="120" Binding="{Binding StatusLabel}"/>
+                <DataGridTextColumn Header="Datei" Width="220" Binding="{Binding FileName}"/>
+                <DataGridTextColumn Header="Status" Width="110" Binding="{Binding StatusLabel}"/>
                 <DataGridTextColumn Header="Genre (alt → neu)" Width="220">
                     <DataGridTextColumn.Binding>
                         <MultiBinding StringFormat="{}{0} → {1}">
@@ -83,13 +88,31 @@
                         </MultiBinding>
                     </DataGridTextColumn.Binding>
                 </DataGridTextColumn>
-                <DataGridTextColumn Header="Sub-Genre" Width="160" Binding="{Binding ProposedSubGenre, FallbackValue=''}"/>
+                <DataGridTextColumn Header="Sub-Genre" Width="140" Binding="{Binding ProposedSubGenre, FallbackValue=''}"/>
                 <DataGridTextColumn Header="BPM" Width="70" Binding="{Binding ProposedBpm}"/>
-                <DataGridTextColumn Header="Key" Width="80" Binding="{Binding ProposedKey}"/>
-                <DataGridTextColumn Header="Energy" Width="70" Binding="{Binding ProposedEnergy}"/>
-                <DataGridTextColumn Header="Mood" Width="110" Binding="{Binding ProposedMood, FallbackValue=''}"/>
-                <DataGridTextColumn Header="Set" Width="110" Binding="{Binding ProposedSetPosition, FallbackValue=''}"/>
+                <DataGridTextColumn Header="Key" Width="60" Binding="{Binding ProposedKey}"/>
+                <DataGridTextColumn Header="Energy" Width="65" Binding="{Binding ProposedEnergy}"/>
+                <DataGridTextColumn Header="Mood" Width="100" Binding="{Binding ProposedMood, FallbackValue=''}"/>
+                <DataGridTextColumn Header="Set" Width="100" Binding="{Binding ProposedSetPosition, FallbackValue=''}"/>
                 <DataGridTextColumn Header="Regeln" Width="*" Binding="{Binding AppliedRules, Converter={x:Static vm:JoinConverter.Instance}}"/>
+                <!-- Per-row Apply button. Command lives on ScanViewModel; we reach back via
+                     the window's DataContext so a row VM doesn't need to carry the coordinator
+                     reference. CanApply gates the button so already-written or unchanged rows
+                     can't be re-applied accidentally. -->
+                <DataGridTemplateColumn Header="" Width="110">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                            <Button Content="Anwenden"
+                                    Padding="8,2"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Center"
+                                    Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.ApplyRowCommand}"
+                                    CommandParameter="{Binding}"
+                                    IsEnabled="{Binding CanApply}"
+                                    ToolTip.Tip="{Binding ApplyError, FallbackValue='Schreibt diese Datei auf Disk.'}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
             </DataGrid.Columns>
         </DataGrid>
 
@@ -103,6 +126,8 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14">
                     <TextBlock Text="{Binding Scan.ScannedCount, StringFormat='{}Gescannt: {0}'}"/>
                     <TextBlock Text="{Binding Scan.ChangedCount, StringFormat='{}Änderungen: {0}'}"/>
+                    <TextBlock Text="{Binding Scan.AppliedCount, StringFormat='{}Angewendet: {0}'}"
+                               Foreground="{DynamicResource SystemControlSuccessTextForegroundBrush}"/>
                     <TextBlock Text="{Binding Scan.FailedCount, StringFormat='{}Fehler: {0}'}"
                                Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}"/>
                 </StackPanel>

@@ -310,4 +310,25 @@ public class MappingRulesLoaderTests
 
         ruleSet.Rules[0].EffectiveOnMatch(ruleSet.Defaults).Should().Be(OnMatch.Stop);
     }
+
+    [Fact]
+    public void Sentinel_inside_a_list_surfaces_a_configuration_error()
+    {
+        // Regression: `genre: [":any:"]` used to be silently treated as "match a genre named
+        // literally `:any:`" — i.e. never. The fixture mappings hit this and `normalise_genre`
+        // never fired. Now the loader rejects it at load time so the next author can't trip on
+        // the same footgun.
+        const string yaml = """
+            version: 1
+            rules:
+              - name: "normalise"
+                when: { genre: [":any:"] }
+                set:  { normalise_genre: true }
+            """;
+
+        var act = () => MappingRulesLoader.LoadFromString(yaml);
+
+        act.Should().Throw<ConfigurationException>()
+            .Which.Errors.Should().Contain(e => e.Reason.Contains("Sentinel ':any:'"));
+    }
 }

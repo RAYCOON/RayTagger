@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.ComponentModel;
 using RayTagger.Core.Models;
 
 namespace RayTagger.Ui.ViewModels;
@@ -8,55 +9,66 @@ namespace RayTagger.Ui.ViewModels;
 /// to understand WHY each field changed.
 /// </summary>
 /// <remarks>
-/// All properties are set in the constructor — no <c>ObservableObject</c> base needed since the
-/// row never mutates after the pipeline yields it. Bindings read the values once and never
-/// re-subscribe. Add it back if Apply / Revert columns gain mutable state.
+/// Mutable state is intentional: after Apply succeeds we flip the Status / StatusLabel and lift
+/// the "Existing" values to match "Proposed" (the file on disk now holds those). That keeps the
+/// row visible in the grid with a "Geschrieben" badge instead of forcing a re-scan.
 /// </remarks>
-public sealed class TrackOutcomeViewModel
+public sealed partial class TrackOutcomeViewModel : ObservableObject
 {
     public string Path { get; }
     public string FileName { get; }
-    public PipelineStatus Status { get; }
 
-    /// <summary>
-    /// Derived view of the pipeline status that's accurate for dry-run too. The pipeline's
-    /// <see cref="PipelineStatus"/> stays <c>Unchanged</c> in dry-run regardless of what the
-    /// rule engine produced — for UX we want "Würde ändern" when the resolved tags differ
-    /// from existing so the user knows there's something to apply.
-    /// </summary>
-    public string StatusLabel { get; }
+    /// <summary>The underlying pipeline outcome — used as the input to a deferred write.</summary>
+    public PipelineOutcome SourceOutcome { get; }
 
-    public string? ExistingGenre { get; }
-    public string? ProposedGenre { get; }
     public TagFieldSource GenreSource { get; }
-
-    public string? ExistingSubGenre { get; }
+    public string? ProposedGenre { get; }
     public string? ProposedSubGenre { get; }
-
-    public double? ExistingBpm { get; }
     public double? ProposedBpm { get; }
-
-    public string? ExistingKey { get; }
     public string? ProposedKey { get; }
-
-    public int? ExistingEnergy { get; }
     public int? ProposedEnergy { get; }
-
-    public string? ExistingMood { get; }
     public string? ProposedMood { get; }
-
-    public string? ExistingSetPosition { get; }
     public string? ProposedSetPosition { get; }
-
     public string? DestinationPath { get; }
     public IReadOnlyList<string> AppliedRules { get; }
     public IReadOnlyList<string> Errors { get; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanApply))]
+    [NotifyPropertyChangedFor(nameof(IsApplied))]
+    private PipelineStatus _status;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanApply))]
+    [NotifyPropertyChangedFor(nameof(IsApplied))]
+    private string _statusLabel = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanApply))]
+    private bool _isApplying;
+
+    [ObservableProperty] private string? _applyError;
+
+    [ObservableProperty] private string? _existingGenre;
+    [ObservableProperty] private string? _existingSubGenre;
+    [ObservableProperty] private double? _existingBpm;
+    [ObservableProperty] private string? _existingKey;
+    [ObservableProperty] private int? _existingEnergy;
+    [ObservableProperty] private string? _existingMood;
+    [ObservableProperty] private string? _existingSetPosition;
+
+    /// <summary>True iff this row has a pending change the user can apply.</summary>
+    public bool CanApply => !IsApplying && StatusLabel == "Würde ändern";
+
+    /// <summary>True after a successful apply — drives the green check glyph + suppresses the button.</summary>
+    public bool IsApplied => Status == PipelineStatus.Written;
 
     public TrackOutcomeViewModel(PipelineOutcome outcome, TrackTags existing)
     {
         ArgumentNullException.ThrowIfNull(outcome);
         ArgumentNullException.ThrowIfNull(existing);
 
+        SourceOutcome = outcome;
         Path = outcome.File.Path;
         FileName = System.IO.Path.GetFileName(outcome.File.Path);
         Status = outcome.Status;
@@ -94,6 +106,43 @@ public sealed class TrackOutcomeViewModel
         DestinationPath = outcome.DestinationPath;
         AppliedRules = [.. outcome.AppliedRules.Select(r => r.RuleName)];
         Errors = [.. outcome.Errors.Select(e => $"[{e.Stage}] {e.Message}")];
+    }
+
+    /// <summary>Mark the row "in progress" — disables its button + raises CanApply.</summary>
+    public void BeginApply()
+    {
+        ApplyError = null;
+        IsApplying = true;
+    }
+
+    /// <summary>
+    /// Flip the row to <see cref="PipelineStatus.Written"/> after a successful write. Lifts every
+    /// Existing-* to match Proposed-* because the file on disk now holds those values; the diff
+    /// arrow effectively collapses to "X → X" so the user can still see the new state without
+    /// re-scanning.
+    /// </summary>
+    public void EndApplySuccess()
+    {
+        ExistingGenre = ProposedGenre;
+        ExistingSubGenre = ProposedSubGenre;
+        ExistingBpm = ProposedBpm;
+        ExistingKey = ProposedKey;
+        ExistingEnergy = ProposedEnergy;
+        ExistingMood = ProposedMood;
+        ExistingSetPosition = ProposedSetPosition;
+
+        IsApplying = false;
+        Status = PipelineStatus.Written;
+        StatusLabel = "Geschrieben";
+    }
+
+    /// <summary>Failure path — flip to red status + surface the message via <see cref="ApplyError"/>.</summary>
+    public void EndApplyFailure(string error)
+    {
+        IsApplying = false;
+        Status = PipelineStatus.Failed;
+        StatusLabel = "Fehler";
+        ApplyError = error;
     }
 
     /// <summary>

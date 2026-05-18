@@ -27,7 +27,17 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     private string? _sourceDirectory;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyAllChangedCommand))]
     private bool _isScanning;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyAllChangedCommand))]
+    private bool _isApplying;
+
+    /// <summary>True while either a scan or apply is running — drives toolbar IsEnabled bindings.</summary>
+    public bool IsBusy => IsScanning || IsApplying;
 
     [ObservableProperty]
     private int _scannedCount;
@@ -37,6 +47,9 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private int _failedCount;
+
+    [ObservableProperty]
+    private int _appliedCount;
 
     [ObservableProperty]
     private string? _statusMessage;
@@ -119,6 +132,113 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     {
         _cts?.Cancel();
     }
+
+    /// <summary>
+    /// Applies a single row's proposed tags to disk. Used by the per-row "Anwenden" button —
+    /// no confirmation dialog because the action is already explicit (one click per row).
+    /// </summary>
+    [RelayCommand]
+    private async Task ApplyRowAsync(TrackOutcomeViewModel? row)
+    {
+        if (row is null || !row.CanApply) return;
+
+        row.BeginApply();
+        try
+        {
+            var result = await _coordinator.ApplyAsync(row.SourceOutcome).ConfigureAwait(true);
+            if (result.Success)
+            {
+                row.EndApplySuccess();
+                AppliedCount++;
+                StatusMessage = $"Angewendet: {row.FileName} ({result.WrittenFields.Count} Felder).";
+            }
+            else
+            {
+                row.EndApplyFailure(result.ErrorMessage ?? "Unbekannter Schreibfehler.");
+                FailedCount++;
+                StatusMessage = $"Fehler beim Anwenden von {row.FileName}: {result.ErrorMessage}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Apply failed for {Path}", row.Path);
+            row.EndApplyFailure(ex.Message);
+            FailedCount++;
+        }
+    }
+
+    /// <summary>
+    /// Applies every row whose status is "Würde ändern" sequentially. The caller (MainWindow
+    /// code-behind) is responsible for confirming with the user before invoking this — the
+    /// command itself trusts that the user has already agreed.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanApplyAllChanged))]
+    private async Task ApplyAllChangedAsync()
+    {
+        var pending = Outcomes.Where(o => o.CanApply).ToList();
+        if (pending.Count == 0)
+        {
+            StatusMessage = "Keine ausstehenden Änderungen.";
+            return;
+        }
+
+        IsApplying = true;
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+
+        var applied = 0;
+        var failed = 0;
+        try
+        {
+            for (var i = 0; i < pending.Count; i++)
+            {
+                if (_cts.Token.IsCancellationRequested) break;
+
+                var row = pending[i];
+                row.BeginApply();
+                StatusMessage = $"Wende an … {i + 1}/{pending.Count} ({row.FileName})";
+
+                try
+                {
+                    var result = await _coordinator.ApplyAsync(row.SourceOutcome, _cts.Token).ConfigureAwait(true);
+                    if (result.Success)
+                    {
+                        row.EndApplySuccess();
+                        applied++;
+                    }
+                    else
+                    {
+                        row.EndApplyFailure(result.ErrorMessage ?? "Unbekannter Schreibfehler.");
+                        failed++;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    row.EndApplyFailure("Abgebrochen.");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Apply failed for {Path}", row.Path);
+                    row.EndApplyFailure(ex.Message);
+                    failed++;
+                }
+            }
+
+            AppliedCount += applied;
+            FailedCount += failed;
+            StatusMessage = _cts.Token.IsCancellationRequested
+                ? $"Abgebrochen nach {applied} angewendet, {failed} fehlgeschlagen."
+                : $"Fertig: {applied} angewendet, {failed} fehlgeschlagen.";
+        }
+        finally
+        {
+            IsApplying = false;
+        }
+    }
+
+    private bool CanApplyAllChanged() => !IsBusy && Outcomes.Any(o => o.CanApply);
 
     /// <summary>
     /// Disposes the last <see cref="CancellationTokenSource"/> the scan command allocated. The
