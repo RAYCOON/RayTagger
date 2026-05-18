@@ -99,6 +99,11 @@ case "$TARGET_RID" in
   win-x64)
     # MSYS2 / MinGW64 toolchain. pkg-config files for all our deps live under
     # /mingw64/lib/pkgconfig — pacman puts them there. Same C++17 reason as macOS.
+    # Force gcc/g++ explicitly: the windows-latest runner has MSVC installed and
+    # waf otherwise picks cl.exe — which can't find the GCC-style <map> header
+    # (C1083) and produces a binary that wouldn't link to /mingw64 libs anyway.
+    export CC=gcc
+    export CXX=g++
     export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     WAF_ARGS+=(--std=c++17)
     ;;
