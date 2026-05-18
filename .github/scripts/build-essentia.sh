@@ -97,15 +97,32 @@ case "$TARGET_RID" in
     :
     ;;
   win-x64)
-    # MSYS2 / MinGW64 toolchain. pkg-config files for all our deps live under
-    # /mingw64/lib/pkgconfig — pacman puts them there. Same C++17 reason as macOS.
-    # Force gcc/g++ explicitly: the windows-latest runner has MSVC installed and
-    # waf otherwise picks cl.exe — which can't find the GCC-style <map> header
-    # (C1083) and produces a binary that wouldn't link to /mingw64 libs anyway.
+    # MSYS2 / MinGW64 toolchain. pkg-config files live under /mingw64/lib/pkgconfig
+    # (pacman puts them there). Same C++17 reason as macOS.
+    #
+    # Force gcc/g++ explicitly: the windows-latest runner has MSVC installed; waf
+    # would otherwise pick cl.exe — which can't find GCC-style <map> headers and
+    # would produce a binary that couldn't link to /mingw64 libs anyway.
     export CC=gcc
     export CXX=g++
     export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     WAF_ARGS+=(--std=c++17)
+
+    # ↓ Diagnostic block: dump toolchain visibility once so we have a concrete
+    # signal if waf still can't find g++. Cheap, removed once Windows builds
+    # are stable.
+    echo "--- MSYS2 toolchain diagnostics ---"
+    echo "MSYSTEM=${MSYSTEM:-<unset>}"
+    echo "PATH=$PATH"
+    echo "which gcc: $(command -v gcc || echo NOTFOUND)"
+    echo "which g++: $(command -v g++ || echo NOTFOUND)"
+    echo "g++ --version (head):"
+    g++ --version 2>&1 | head -3 || echo "g++ FAILED"
+    echo "ls /mingw64/bin/g++*:"
+    ls /mingw64/bin/g++* 2>&1 | head -5
+    echo "pacman -Q mingw-w64-x86_64-gcc:"
+    pacman -Q mingw-w64-x86_64-gcc 2>&1 | head -3
+    echo "--- end diagnostics ---"
     ;;
 esac
 
