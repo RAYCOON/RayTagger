@@ -46,6 +46,12 @@ public sealed class TagLibTagWriter : ITagWriter
             return new TagWriteResult(path, DryRun: true, fieldsToWrite, BackupPath: null);
         }
 
+        // Pre-flight: refuse if the audio file is held open by another process. ARCHITECTURE.md
+        // §6.3 promises a graceful refusal rather than letting TagLib# throw an IOException deep
+        // inside the save. Open + dispose with FileShare.None — if another process has it locked,
+        // this fails fast with a clean message and we never touch the file.
+        EnsureFileIsWritable(path);
+
         // Backup before any mutation.
         string? backupPath = null;
         if (options.Backup)
@@ -54,13 +60,29 @@ public sealed class TagLibTagWriter : ITagWriter
             backupPath = _backupWriter.Write(path, existing, options.BackupDirectory);
         }
 
+        // Atomic write: TagLib# mutates the file in place, which leaves a half-written audio
+        // file if the process dies during Save(). We copy to a temp sibling, let TagLib# rewrite
+        // it there, then atomic-rename over the original. On macOS/Linux File.Move with
+        // overwrite is rename(2) — atomic. On Windows File.Move uses MoveFileEx with
+        // MOVEFILE_REPLACE_EXISTING, also atomic on the same volume.
+        var tempPath = path + ".tagger.tmp";
+        try
+        {
+            FsFile.Copy(path, tempPath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new MetadataException($"Failed to stage temp copy of {path}: {ex.Message}", path, ex);
+        }
+
         TagLib.File tagFile;
         try
         {
-            tagFile = TagLib.File.Create(path);
+            tagFile = TagLib.File.Create(tempPath);
         }
         catch (Exception ex) when (ex is TagLib.CorruptFileException or TagLib.UnsupportedFormatException)
         {
+            TryDelete(tempPath);
             throw new MetadataException($"Cannot open file for writing: {path}: {ex.Message}", path, ex);
         }
 
@@ -71,6 +93,8 @@ public sealed class TagLibTagWriter : ITagWriter
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            tagFile.Dispose();
+            TryDelete(tempPath);
             throw new MetadataException($"Failed to save tags to {path}: {ex.Message}", path, ex);
         }
         finally
@@ -78,7 +102,73 @@ public sealed class TagLibTagWriter : ITagWriter
             tagFile.Dispose();
         }
 
+        try
+        {
+            FsFile.Move(tempPath, path, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            TryDelete(tempPath);
+            throw new MetadataException($"Failed to commit tag changes to {path}: {ex.Message}", path, ex);
+        }
+
         return new TagWriteResult(path, DryRun: false, fieldsToWrite, backupPath);
+    }
+
+    /// <summary>
+    /// Probes the file with <see cref="FileShare.None"/>. Throws a structured
+    /// <see cref="MetadataException"/> if another process holds an exclusive or shared lock —
+    /// caller maps it to a per-file pipeline error. Disposes the handle immediately on success
+    /// so we don't hold the lock ourselves into the actual write.
+    /// </summary>
+    private static void EnsureFileIsWritable(string path)
+    {
+        try
+        {
+            using var probe = FsFile.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException ex) when (IsSharingViolation(ex))
+        {
+            throw new MetadataException(
+                $"Cannot write to {path}: file is currently held open by another process.",
+                path, ex);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new MetadataException(
+                $"Cannot write to {path}: permission denied.",
+                path, ex);
+        }
+    }
+
+    private static bool IsSharingViolation(IOException ex)
+    {
+        // ERROR_SHARING_VIOLATION on Windows = 0x80070020; on POSIX an EBUSY-style error doesn't
+        // collide with normal "not found" / "out of space" cases. Use HResult low byte to detect
+        // the sharing case portably; fall back to message inspection for cross-platform parity.
+        var lowByte = ex.HResult & 0xFFFF;
+        return lowByte == 32
+            || ex.Message.Contains("being used by another process", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("Resource busy", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (FsFile.Exists(path))
+            {
+                FsFile.Delete(path);
+            }
+        }
+        catch (IOException)
+        {
+            // Best-effort: a leftover .tagger.tmp gets overwritten on the next write attempt.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Same — informational, not actionable here.
+        }
     }
 
     /// <summary>
