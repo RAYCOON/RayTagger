@@ -73,6 +73,12 @@ echo "== Building Essentia $COMMIT_SHORT ($COMMIT_DATE) — '$COMMIT_MSG' =="
 # we drop the actions/setup-python pin to 3.11. Safe to strip everywhere.
 sed -i.bak '/^import distutils\.sysconfig$/d' "$ESSENTIA_REPO/src/examples/wscript"
 
+# Essentia's top wscript assumes sys.platform == 'win32' implies MSVC and
+# injects '-W2 -EHsc' compiler flags. With MinGW64 on Windows that breaks
+# (g++ rejects MSVC-style switches). Swap in the Unix flag set; harmless on
+# non-Windows where this branch isn't taken anyway.
+sed -i.bak "s|ctx\.env\.CXXFLAGS += \[.-W2., .-EHsc.\]|ctx.env.CXXFLAGS += ['-pipe', '-Wall']  # MinGW64 patch|" "$ESSENTIA_REPO/wscript"
+
 # Force UTF-8 stdout so Essentia's wscript print('→ ...') doesn't trip Windows'
 # default cp1252 codec. Harmless on Unix.
 export PYTHONIOENCODING=utf-8
