@@ -96,9 +96,12 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          # tar + git are part of the setup-msys2 bootstrap — listing them here
-          # gives "is up to date — skipping" noise without changing the install.
+          # tar ships with the setup-msys2 bootstrap (listing it just produces
+          # "is up to date — skipping" noise). git does NOT ship with the
+          # bootstrap and the build-essentia.sh script invokes git for the
+          # Essentia checkout metadata — keep git in the install list.
           install: >-
+            git
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-eigen3
