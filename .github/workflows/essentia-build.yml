@@ -282,6 +282,10 @@ jobs:
       - name: Open manifest-update PR
         uses: peter-evans/create-pull-request@v8
         with:
+          # Only stage the manifest. Without add-paths the action commits the
+          # whole untracked working tree, which would include flat/ (the build
+          # artifacts staged in the previous steps).
+          add-paths: samples/native-tools.example.yaml
           commit-message: "build(essentia): refresh manifest to ${{ steps.flatten.outputs.version_label }}"
           branch: "automation/essentia-${{ steps.flatten.outputs.commit_date }}"
           base: main
