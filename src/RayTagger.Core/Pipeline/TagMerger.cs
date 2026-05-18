@@ -53,12 +53,19 @@ public static class TagMerger
         var genre = MergeLookupString(existing.Genre, topGenre, policy);
         var subgenre = MergeLookupString(existing.SubGenre, topSubGenre, policy);
 
+        // Mood / SetPosition aren't populated by analyzers or lookup today — they come either
+        // from existing tags on disk or from a mapping rule's `set:`. Seed from existing.
+        var mood = new ResolvedField<string>(existing.Mood, TagFieldSource.Existing,
+            string.IsNullOrEmpty(existing.Mood) ? 0 : 1);
+        var setPosition = new ResolvedField<string>(existing.SetPosition, TagFieldSource.Existing,
+            string.IsNullOrEmpty(existing.SetPosition) ? 0 : 1);
+
         var custom = existing.Custom.ToDictionary(
             kv => kv.Key,
             kv => new ResolvedField<string>(kv.Value, TagFieldSource.Existing, 1),
             StringComparer.OrdinalIgnoreCase);
 
-        return new ResolvedTrackTags(genre, subgenre, bpm, key, energy, custom);
+        return new ResolvedTrackTags(genre, subgenre, bpm, key, energy, mood, setPosition, custom);
     }
 
     private static ResolvedField<string> MergeLookupString(

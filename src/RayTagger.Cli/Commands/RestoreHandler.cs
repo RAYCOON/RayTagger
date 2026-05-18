@@ -123,6 +123,8 @@ internal static class RestoreHandler
             Bpm: new ResolvedValueField<double>(snapshot.Bpm, TagFieldSource.Rules, 1.0),
             Key: new ResolvedField<MusicalKey>(snapshot.Key, TagFieldSource.Rules, 1.0),
             Energy: new ResolvedValueField<int>(snapshot.Energy, TagFieldSource.Rules, 1.0),
+            Mood: new ResolvedField<string>(snapshot.Mood, TagFieldSource.Rules, 1.0),
+            SetPosition: new ResolvedField<string>(snapshot.SetPosition, TagFieldSource.Rules, 1.0),
             Custom: custom);
     }
 

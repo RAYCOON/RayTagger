@@ -194,5 +194,7 @@ public sealed class SortServiceTests : IDisposable
             ResolvedField.EmptyValue<double>(),
             ResolvedField.Empty<MusicalKey>(),
             ResolvedField.EmptyValue<int>(),
+            ResolvedField.Empty<string>(),
+            ResolvedField.Empty<string>(),
             new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase));
 }

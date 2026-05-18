@@ -16,7 +16,8 @@ public interface IMappingRuleEngine
         ResolvedTrackTags tags,
         TrackTags? existing,
         TrackFile file,
-        MappingRuleSet ruleset);
+        MappingRuleSet ruleset,
+        Taxonomy? taxonomy = null);
 }
 
 /// <summary>

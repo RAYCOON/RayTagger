@@ -62,6 +62,8 @@ public sealed record ResolvedTrackTags(
     ResolvedValueField<double> Bpm,
     ResolvedField<MusicalKey> Key,
     ResolvedValueField<int> Energy,
+    ResolvedField<string> Mood,
+    ResolvedField<string> SetPosition,
     IReadOnlyDictionary<string, ResolvedField<string>> Custom)
 {
     public static ResolvedTrackTags Empty { get; } = new(
@@ -70,5 +72,7 @@ public sealed record ResolvedTrackTags(
         ResolvedField.EmptyValue<double>(),
         ResolvedField.Empty<MusicalKey>(),
         ResolvedField.EmptyValue<int>(),
+        ResolvedField.Empty<string>(),
+        ResolvedField.Empty<string>(),
         new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase));
 }

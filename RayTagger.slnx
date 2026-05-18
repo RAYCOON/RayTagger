@@ -3,6 +3,7 @@
     <Project Path="src/RayTagger.Analysis/RayTagger.Analysis.csproj" />
     <Project Path="src/RayTagger.Cli/RayTagger.Cli.csproj" />
     <Project Path="src/RayTagger.Core/RayTagger.Core.csproj" />
+    <Project Path="src/RayTagger.Hosting/RayTagger.Hosting.csproj" />
     <Project Path="src/RayTagger.Lookup/RayTagger.Lookup.csproj" />
     <Project Path="src/RayTagger.Metadata/RayTagger.Metadata.csproj" />
     <Project Path="src/RayTagger.Ui/RayTagger.Ui.csproj" />

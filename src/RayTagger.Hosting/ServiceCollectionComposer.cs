@@ -1,53 +1,46 @@
-using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
-using Microsoft.Extensions.Logging;
 using Polly;
 using RayTagger.Analysis;
 using RayTagger.Analysis.Bootstrap;
 using RayTagger.Analysis.Internal;
-using RayTagger.Core.Configuration;
 using RayTagger.Core.IO;
 using RayTagger.Core.Mapping;
 using RayTagger.Core.Pipeline;
-using RayTagger.Lookup;
-using RayTagger.Lookup.Caching;
 using RayTagger.Metadata;
 
-namespace RayTagger.Cli.Hosting;
+namespace RayTagger.Hosting;
 
 /// <summary>
-/// Registers everything the CLI verb handlers (and the future Phase-6 UI) both need from the DI
-/// container — pipeline services, native-tool resolver, and the four lookup-provider HttpClients
-/// wrapped in a Polly resilience pipeline (retry, circuit-breaker, rate-limit-aware on 429/503).
+/// Registers the services every RayTagger host (CLI and UI today, Avalonia + future automation
+/// later) needs: stateless pipeline parts, native-tool infrastructure, and the four
+/// lookup-provider <see cref="HttpClient"/>s wrapped in a Polly resilience pipeline.
 /// </summary>
 /// <remarks>
-/// The composer is intentionally minimal: it does NOT instantiate analyzers (those depend on
-/// the resolved native-tool paths discovered at scan startup) and it does NOT instantiate the
-/// lookup providers themselves (each needs its own configured HttpClient by name and an API
-/// key). The verb handler resolves an HttpClientFactory and the probe from the container and
-/// finishes the wiring once it knows the loaded options.
+/// The composer is intentionally side-effect-light: it does NOT instantiate analyzers
+/// (resolved per scan via <see cref="PipelineFactory"/>) and it does NOT instantiate the
+/// lookup providers themselves (each needs an API key and a named HttpClient). Callers resolve
+/// <see cref="IHttpClientFactory"/> and <see cref="IAnalysisToolProbe"/> from the container and
+/// finish wiring at scan-start time when the loaded options are known.
 /// </remarks>
-internal static class ServiceCollectionComposer
+public static class ServiceCollectionComposer
 {
     public const string AcoustIdHttpClient = "acoustid";
     public const string MusicBrainzHttpClient = "musicbrainz";
     public const string DiscogsHttpClient = "discogs";
     public const string LastFmHttpClient = "lastfm";
 
-    public static IServiceCollection AddRayTaggerServices(this IServiceCollection services)
+    public static IServiceCollection AddRayTaggerHosting(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        // Singleton-by-nature, stateless metadata helpers.
+        // Stateless metadata + pipeline services.
         services.AddSingleton<ITagReader, TagLibTagReader>();
         services.AddSingleton<BackupSidecarWriter>();
         services.AddSingleton<ITagWriter, TagLibTagWriter>();
         services.AddSingleton<ITagReaderAdapter>(sp => new TagReaderAdapter(sp.GetRequiredService<ITagReader>()));
         services.AddSingleton<ITagWriterAdapter>(sp => new TagWriterAdapter(sp.GetRequiredService<ITagWriter>()));
         services.AddSingleton<SidecarRestoreService>();
-
-        // Pipeline-stage services that don't need per-scan configuration.
         services.AddSingleton<IFileDiscoveryService, FileDiscoveryService>();
         services.AddSingleton<IMappingRuleEngine, MappingRuleEngine>();
         services.AddSingleton<ISortService, SortService>();
@@ -57,8 +50,7 @@ internal static class ServiceCollectionComposer
         services.AddSingleton<NativeProcessRunner>();
         services.AddSingleton<IAnalysisToolProbe, AnalysisToolProbe>();
 
-        // Lookup provider HttpClients each get the standard resilience pipeline + a base address
-        // + the descriptive User-Agent MusicBrainz / Discogs require.
+        // Lookup HttpClients with the Polly resilience pipeline.
         AddProviderHttpClient(services, AcoustIdHttpClient, "https://api.acoustid.org/");
         AddProviderHttpClient(services, MusicBrainzHttpClient, "https://musicbrainz.org/");
         AddProviderHttpClient(services, DiscogsHttpClient, "https://api.discogs.com/");
@@ -72,23 +64,16 @@ internal static class ServiceCollectionComposer
         services.AddHttpClient(name, client =>
         {
             client.BaseAddress = new Uri(baseAddress);
-            // 15s per-attempt timeout (vs the 100s .NET default). The resilience pipeline below
-            // adds its own per-attempt + total-request timeouts that compose with this; this
-            // value is the absolute ceiling on a single HTTP request before we abort.
+            // 15s per-request ceiling on top of the resilience pipeline's per-attempt + total
+            // timeouts below. MusicBrainz/Discogs require a descriptive User-Agent.
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd(
                 "RayTagger/0.1 (+https://github.com/RAYCOON/raytagger)");
         })
-        // AddStandardResilienceHandler delivers retry (transient errors only — 5xx / 408 / network
-        // failures; never 4xx), rate-limit-aware backoff on 429/503 with Retry-After honoured,
-        // circuit breaker, total-request and per-attempt timeouts. This is the contract review
-        // #8 demanded — replaces the previous "15s timeout + no retry" with a real resilience
-        // pipeline that respects the upstream provider's load signals.
+        // Standard resilience: retry transient errors, honour Retry-After on 429/503, circuit
+        // breaker on sustained failure, total + per-attempt timeouts.
         .AddStandardResilienceHandler(options =>
         {
-            // MusicBrainz hard-limits to ~1 req/s and replies 503 with Retry-After=N when
-            // exceeded — make the retry budget generous enough that we ride out the wait rather
-            // than failing the scan.
             options.Retry.MaxRetryAttempts = 3;
             options.Retry.BackoffType = DelayBackoffType.Exponential;
             options.Retry.UseJitter = true;

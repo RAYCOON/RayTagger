@@ -58,6 +58,18 @@ internal static class FrameMapper
         WriteUserDefined(file, map.EnergyLevelId3Description, map.EnergyLevelVorbisField, text);
     }
 
+    public static void WriteMood(TagLib.File file, string? value, TagFieldMap map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        WriteUserDefined(file, map.MoodId3Description, map.MoodVorbisField, value);
+    }
+
+    public static void WriteSetPosition(TagLib.File file, string? value, TagFieldMap map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        WriteUserDefined(file, map.SetPositionId3Description, map.SetPositionVorbisField, value);
+    }
+
     /// <summary>
     /// Writes a custom user-defined frame (anything from mapping rule <c>set: { tag.NAME: value }</c>
     /// or read from existing TXXX/Vorbis fields outside the logical field set). Description is the

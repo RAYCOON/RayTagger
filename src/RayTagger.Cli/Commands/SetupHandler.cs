@@ -5,6 +5,7 @@ using RayTagger.Analysis.Bootstrap;
 using RayTagger.Analysis.Internal;
 using RayTagger.Cli.Hosting;
 using RayTagger.Core.Configuration;
+using RayTagger.Hosting;
 using Spectre.Console;
 
 namespace RayTagger.Cli.Commands;
@@ -42,7 +43,8 @@ internal static class SetupHandler
 
         using var loggerFactory = SerilogSetup.Build(options.Logging, verboseOverride: verbose);
 
-        var bootstrapper = NativeToolsBootstrapFactory.BuildBootstrapper(options.NativeTools, loggerFactory, console);
+        var statusReporter = new SpectreToolStatusReporter(console);
+        var bootstrapper = NativeToolsBootstrapFactory.BuildBootstrapper(options.NativeTools, loggerFactory, statusReporter);
         if (bootstrapper is null)
         {
             console.MarkupLine("[red]Cannot run setup without a usable native-tools manifest. Copy samples/native-tools.example.yaml next to tagger.yaml and fill in URLs + SHA-256 hashes.[/]");

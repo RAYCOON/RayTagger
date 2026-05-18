@@ -30,5 +30,11 @@ public sealed record TagFieldMap
     public string EnergyLevelId3Description { get; init; } = "ENERGYLEVEL";
     public string EnergyLevelVorbisField { get; init; } = "ENERGYLEVEL";
 
+    public string MoodId3Description { get; init; } = "MOOD";
+    public string MoodVorbisField { get; init; } = "MOOD";
+
+    public string SetPositionId3Description { get; init; } = "SETPOSITION";
+    public string SetPositionVorbisField { get; init; } = "SETPOSITION";
+
     public static TagFieldMap Default { get; } = new();
 }

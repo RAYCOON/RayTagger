@@ -41,13 +41,15 @@ public class TagFieldMapBuilderTests
         var errors = new List<ConfigurationError>();
         var raw = new Dictionary<string, List<string>>(StringComparer.Ordinal)
         {
-            ["mood"] = ["ID3:TXXX:MOOD"],
+            // "mood" / "set_position" are first-class fields now, so pick something the builder
+            // genuinely doesn't recognise.
+            ["timecode"] = ["ID3:TXXX:TIMECODE"],
         };
 
         TagFieldMapBuilder.Build(raw, errors);
 
         errors.Should().ContainSingle()
-            .Which.YamlPath.Should().Be("write.tag_fields.mood");
+            .Which.YamlPath.Should().Be("write.tag_fields.timecode");
     }
 
     [Fact]

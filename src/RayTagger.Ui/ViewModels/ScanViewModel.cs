@@ -90,7 +90,10 @@ public sealed partial class ScanViewModel : ObservableObject
                     Outcomes.Add(vm);
                     ScannedCount = Outcomes.Count;
                     if (outcome.Status == PipelineStatus.Failed) FailedCount++;
-                    else if (outcome.Status == PipelineStatus.Written) ChangedCount++;
+                    // "Würde ändern" counts under the Änderungen banner too — dry-run scans
+                    // never reach Written, so without this the user sees "0 Änderungen" every
+                    // time despite the rule engine doing meaningful work.
+                    else if (vm.StatusLabel is "Geschrieben" or "Würde ändern") ChangedCount++;
                 });
             }
             StatusMessage = $"Fertig: {ScannedCount} Dateien, {ChangedCount} Änderungen vorgeschlagen, {FailedCount} Fehler.";

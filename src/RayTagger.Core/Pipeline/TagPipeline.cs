@@ -230,7 +230,7 @@ public sealed class TagPipeline : ITagPipeline
         IReadOnlyList<MappingRuleHit> appliedRules = [];
         try
         {
-            var ruleResult = _ruleEngine.Evaluate(resolved, existing, file, rules);
+            var ruleResult = _ruleEngine.Evaluate(resolved, existing, file, rules, options.Taxonomy.Loaded);
             resolved = ruleResult.Tags;
             appliedRules = ruleResult.Applied;
         }
@@ -295,6 +295,8 @@ public sealed class TagPipeline : ITagPipeline
         || resolved.Bpm.Source != TagFieldSource.Existing
         || resolved.Key.Source != TagFieldSource.Existing
         || resolved.Energy.Source != TagFieldSource.Existing
+        || resolved.Mood.Source != TagFieldSource.Existing
+        || resolved.SetPosition.Source != TagFieldSource.Existing
         // Custom fields set by mapping rules count too — without this, a rule that ONLY changes
         // a custom tag (no logical slot touched) gets bucketed as Unchanged and the writer is
         // skipped, silently dropping the user's declarative intent on the floor.

@@ -72,6 +72,18 @@ public sealed class TagLibTagReader : ITagReader
                 ? VorbisCommentAccessor.GetField(xiph, TaggerTxxxFrames.SubGenre)
                 : null;
 
+        var mood = id3 is not null
+            ? Id3v2FrameAccessor.GetUserText(id3, TaggerTxxxFrames.Mood)
+            : xiph is not null
+                ? VorbisCommentAccessor.GetField(xiph, TaggerTxxxFrames.Mood)
+                : null;
+
+        var setPosition = id3 is not null
+            ? Id3v2FrameAccessor.GetUserText(id3, TaggerTxxxFrames.SetPosition)
+            : xiph is not null
+                ? VorbisCommentAccessor.GetField(xiph, TaggerTxxxFrames.SetPosition)
+                : null;
+
         var musicalKey = KeyNotationConverter.FromEither(common.InitialKey, camelot);
 
         // TagLib# exposes container-decoded duration on Properties (null if the file is corrupt
@@ -93,6 +105,8 @@ public sealed class TagLibTagReader : ITagReader
             Bpm: common.BeatsPerMinute > 0 ? common.BeatsPerMinute : null,
             Key: musicalKey,
             Energy: ParseEnergy(energyText),
+            Mood: NullIfEmpty(mood),
+            SetPosition: NullIfEmpty(setPosition),
             DurationSeconds: durationSeconds,
             Custom: ExtractUnknownFrames(id3, xiph));
     }
@@ -124,6 +138,8 @@ public sealed class TagLibTagReader : ITagReader
             TaggerTxxxFrames.CamelotKey,
             TaggerTxxxFrames.EnergyLevel,
             TaggerTxxxFrames.SubGenre,
+            TaggerTxxxFrames.Mood,
+            TaggerTxxxFrames.SetPosition,
         };
 
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -146,6 +162,7 @@ public sealed class TagLibTagReader : ITagReader
                 "TITLE", "ARTIST", "ALBUMARTIST", "ALBUM", "DATE", "GENRE",
                 "BPM", "INITIALKEY",
                 TaggerTxxxFrames.CamelotKey, TaggerTxxxFrames.EnergyLevel, TaggerTxxxFrames.SubGenre,
+                TaggerTxxxFrames.Mood, TaggerTxxxFrames.SetPosition,
             };
             foreach (var kvp in VorbisCommentAccessor.EnumerateFields(xiph))
             {

@@ -38,6 +38,8 @@ public class SortTemplateEngineTests
             ResolvedField.EmptyValue<double>(),
             ResolvedField.Empty<MusicalKey>(),
             ResolvedField.EmptyValue<int>(),
+            ResolvedField.Empty<string>(),
+            ResolvedField.Empty<string>(),
             new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase));
 
         var path = SortTemplateEngine.Render("{genre}/{subgenre?}/{artist} - {title}.{ext}", existing, resolved, "mp3");
@@ -129,6 +131,8 @@ public class SortTemplateEngineTests
             new ResolvedValueField<double>(128.0, TagFieldSource.Analysis, 1),
             new ResolvedField<MusicalKey>(new MusicalKey("Am", "8A"), TagFieldSource.Analysis, 1),
             new ResolvedValueField<int>(7, TagFieldSource.Analysis, 1),
+            ResolvedField.Empty<string>(),
+            ResolvedField.Empty<string>(),
             new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase));
 
         var path = SortTemplateEngine.Render("{bpm}_{camelot}_{energy}.{ext}", existing, resolved, "mp3");
@@ -154,5 +158,7 @@ public class SortTemplateEngineTests
             ResolvedField.EmptyValue<double>(),
             ResolvedField.Empty<MusicalKey>(),
             ResolvedField.EmptyValue<int>(),
+            ResolvedField.Empty<string>(),
+            ResolvedField.Empty<string>(),
             new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase));
 }

@@ -33,6 +33,7 @@
     <ProjectReference Include="..\RayTagger.Metadata\RayTagger.Metadata.csproj" />
     <ProjectReference Include="..\RayTagger.Analysis\RayTagger.Analysis.csproj" />
     <ProjectReference Include="..\RayTagger.Lookup\RayTagger.Lookup.csproj" />
+    <ProjectReference Include="..\RayTagger.Hosting\RayTagger.Hosting.csproj" />
   </ItemGroup>
 
 </Project>

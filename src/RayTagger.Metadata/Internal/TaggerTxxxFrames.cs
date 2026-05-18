@@ -13,4 +13,6 @@ internal static class TaggerTxxxFrames
     public const string CamelotKey = "CAMELOTKEY";
     public const string EnergyLevel = "ENERGYLEVEL";
     public const string SubGenre = "SUBGENRE";
+    public const string Mood = "MOOD";
+    public const string SetPosition = "SETPOSITION";
 }

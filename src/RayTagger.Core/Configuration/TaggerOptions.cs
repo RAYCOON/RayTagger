@@ -18,6 +18,27 @@ public sealed class TaggerOptions
     public SortOptions Sort { get; set; } = new();
     public LoggingOptions Logging { get; set; } = new();
     public NativeToolsOptions NativeTools { get; set; } = new();
+    public TaxonomyOptions Taxonomy { get; set; } = new();
+}
+
+/// <summary>
+/// Points at the external taxonomy YAML file. Lives in its own pair of POCO + loaded snapshot
+/// so the rule engine and rule loader can consult the loaded taxonomy without parsing it twice.
+/// </summary>
+public sealed class TaxonomyOptions
+{
+    /// <summary>
+    /// Path to the taxonomy YAML. Empty disables taxonomy features entirely — the rule engine
+    /// runs without genre normalisation and without enforcement.
+    /// </summary>
+    public string File { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Loaded taxonomy (set by <c>TaggerOptionsLoader</c> after parsing <see cref="File"/>).
+    /// <see cref="RayTagger.Core.Mapping.Taxonomy.Empty"/> when <see cref="File"/> is unset.
+    /// </summary>
+    public RayTagger.Core.Mapping.Taxonomy Loaded { get; set; }
+        = RayTagger.Core.Mapping.Taxonomy.Empty;
 }
 
 /// <summary>

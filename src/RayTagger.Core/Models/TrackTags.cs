@@ -17,6 +17,8 @@ public sealed record TrackTags(
     double? Bpm = null,
     MusicalKey? Key = null,
     int? Energy = null,
+    string? Mood = null,
+    string? SetPosition = null,
     int? DurationSeconds = null,
     IReadOnlyDictionary<string, string>? Custom = null)
 {

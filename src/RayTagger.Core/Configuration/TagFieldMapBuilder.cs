@@ -88,6 +88,16 @@ public static class TagFieldMapBuilder
                 EnergyLevelId3Description = id3 ?? map.EnergyLevelId3Description,
                 EnergyLevelVorbisField = vorbis ?? map.EnergyLevelVorbisField,
             },
+            "mood" => map with
+            {
+                MoodId3Description = id3 ?? map.MoodId3Description,
+                MoodVorbisField = vorbis ?? map.MoodVorbisField,
+            },
+            "set_position" or "setposition" => map with
+            {
+                SetPositionId3Description = id3 ?? map.SetPositionId3Description,
+                SetPositionVorbisField = vorbis ?? map.SetPositionVorbisField,
+            },
             _ => map,
         };
     }
@@ -145,6 +155,7 @@ public static class TagFieldMapBuilder
     private static readonly string[] KnownLogicalFields =
     [
         "genre", "subgenre", "bpm", "key", "camelot", "camelotkey", "energy", "energylevel",
+        "mood", "set_position", "setposition",
     ];
 
     private static bool IsKnownLogicalField(string name) =>

@@ -14,7 +14,7 @@
          can't resolve. The Avalonia previewer renders against an empty DataContext, which is
          fine for layout work. -->
 
-    <Grid RowDefinitions="Auto,*,Auto">
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
 
         <!-- Top toolbar -->
         <Border Grid.Row="0" Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
@@ -35,8 +35,36 @@
             </StackPanel>
         </Border>
 
+        <!-- Analyzer + lookup status panel: live banner of tool availability. -->
+        <Border Grid.Row="1" Padding="12,6"
+                BorderThickness="0,0,0,1"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                IsVisible="{Binding ToolStatus.Entries.Count}">
+            <ItemsControl ItemsSource="{Binding ToolStatus.Entries}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,2,16,2" Padding="6,2"
+                                CornerRadius="4"
+                                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="{Binding Glyph}" FontWeight="Bold"/>
+                                <TextBlock Text="{Binding Label}"/>
+                                <TextBlock Text="{Binding Detail, FallbackValue=''}"
+                                           Opacity="0.6"/>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </Border>
+
         <!-- Results grid -->
-        <DataGrid Grid.Row="1"
+        <DataGrid Grid.Row="2"
                   ItemsSource="{Binding Scan.Outcomes}"
                   CanUserSortColumns="True"
                   CanUserResizeColumns="True"
@@ -46,7 +74,7 @@
                   RowHeight="28">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Datei" Width="240" Binding="{Binding FileName}"/>
-                <DataGridTextColumn Header="Status" Width="100" Binding="{Binding Status}"/>
+                <DataGridTextColumn Header="Status" Width="120" Binding="{Binding StatusLabel}"/>
                 <DataGridTextColumn Header="Genre (alt → neu)" Width="220">
                     <DataGridTextColumn.Binding>
                         <MultiBinding StringFormat="{}{0} → {1}">
@@ -59,12 +87,14 @@
                 <DataGridTextColumn Header="BPM" Width="70" Binding="{Binding ProposedBpm}"/>
                 <DataGridTextColumn Header="Key" Width="80" Binding="{Binding ProposedKey}"/>
                 <DataGridTextColumn Header="Energy" Width="70" Binding="{Binding ProposedEnergy}"/>
+                <DataGridTextColumn Header="Mood" Width="110" Binding="{Binding ProposedMood, FallbackValue=''}"/>
+                <DataGridTextColumn Header="Set" Width="110" Binding="{Binding ProposedSetPosition, FallbackValue=''}"/>
                 <DataGridTextColumn Header="Regeln" Width="*" Binding="{Binding AppliedRules, Converter={x:Static vm:JoinConverter.Instance}}"/>
             </DataGrid.Columns>
         </DataGrid>
 
         <!-- Status bar -->
-        <Border Grid.Row="2" Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+        <Border Grid.Row="3" Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
                 Padding="12,6" BorderThickness="0,1,0,0"
                 BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
             <Grid ColumnDefinitions="*,Auto">

@@ -29,7 +29,8 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         ResolvedTrackTags tags,
         TrackTags? existing,
         TrackFile file,
-        MappingRuleSet ruleset)
+        MappingRuleSet ruleset,
+        Taxonomy? taxonomy = null)
     {
         ArgumentNullException.ThrowIfNull(tags);
         ArgumentNullException.ThrowIfNull(file);
@@ -45,7 +46,7 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
                 continue;
             }
 
-            var (newTags, changedFields) = Apply(rule.Set, context.Tags);
+            var (newTags, changedFields) = Apply(rule.Set, context.Tags, taxonomy);
             context = context with { Tags = newTags };
             applied.Add(new MappingRuleHit(rule.Name, changedFields));
 
@@ -229,21 +230,56 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
 
     // -------- Set-clause application ------------------------------------------------------------
 
-    private static (ResolvedTrackTags Tags, IReadOnlyList<string> Changed) Apply(SetClause set, ResolvedTrackTags tags)
+    private static (ResolvedTrackTags Tags, IReadOnlyList<string> Changed) Apply(
+        SetClause set,
+        ResolvedTrackTags tags,
+        Taxonomy? taxonomy)
     {
         var changed = new List<string>();
         var newGenre = tags.Genre;
         var newSubGenre = tags.SubGenre;
+        var newBpm = tags.Bpm;
+        var newMood = tags.Mood;
+        var newSetPosition = tags.SetPosition;
+
+        // normalise_genre runs FIRST so a later explicit genre/subgenre in the same rule can still
+        // overwrite it. Looks up the current resolved Genre in taxonomy.NormaliseByAlias.
+        if (set.NormaliseGenre && taxonomy is not null && !string.IsNullOrEmpty(tags.Genre.Value)
+            && taxonomy.NormaliseByAlias.TryGetValue(tags.Genre.Value, out var canonical))
+        {
+            newGenre = new ResolvedField<string>(canonical.Genre, TagFieldSource.Rules, 1.0);
+            newSubGenre = new ResolvedField<string>(canonical.Subgenre, TagFieldSource.Rules, 1.0);
+            changed.Add("genre");
+            changed.Add("subgenre");
+        }
 
         if (set.Genre is not null)
         {
             newGenre = new ResolvedField<string>(NormaliseSetValue(set.Genre), TagFieldSource.Rules, 1.0);
-            changed.Add("genre");
+            if (!changed.Contains("genre")) changed.Add("genre");
         }
         if (set.Subgenre is not null)
         {
             newSubGenre = new ResolvedField<string>(NormaliseSetValue(set.Subgenre), TagFieldSource.Rules, 1.0);
-            changed.Add("subgenre");
+            if (!changed.Contains("subgenre")) changed.Add("subgenre");
+        }
+        if (set.Mood is not null)
+        {
+            newMood = new ResolvedField<string>(NormaliseSetValue(set.Mood), TagFieldSource.Rules, 1.0);
+            changed.Add("mood");
+        }
+        if (set.SetPosition is not null)
+        {
+            newSetPosition = new ResolvedField<string>(NormaliseSetValue(set.SetPosition), TagFieldSource.Rules, 1.0);
+            changed.Add("set_position");
+        }
+
+        if (set.BpmTransform is BpmTransform t and not BpmTransform.None && tags.Bpm.Value.HasValue)
+        {
+            var factor = t == BpmTransform.Double ? 2.0 : 0.5;
+            var transformed = tags.Bpm.Value.Value * factor;
+            newBpm = new ResolvedValueField<double>(transformed, TagFieldSource.Rules, 1.0);
+            changed.Add("bpm");
         }
 
         IReadOnlyDictionary<string, ResolvedField<string>> newCustom = tags.Custom;
@@ -263,7 +299,15 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
             newCustom = mutable;
         }
 
-        return (tags with { Genre = newGenre, SubGenre = newSubGenre, Custom = newCustom }, changed);
+        return (tags with
+        {
+            Genre = newGenre,
+            SubGenre = newSubGenre,
+            Bpm = newBpm,
+            Mood = newMood,
+            SetPosition = newSetPosition,
+            Custom = newCustom,
+        }, changed);
     }
 
     private static string? NormaliseSetValue(string raw) =>

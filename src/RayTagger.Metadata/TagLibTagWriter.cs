@@ -180,12 +180,14 @@ public sealed class TagLibTagWriter : ITagWriter
     /// </summary>
     private static List<string> ResolveFieldsToWrite(ResolvedTrackTags resolved)
     {
-        var list = new List<string>(8 + resolved.Custom.Count);
+        var list = new List<string>(10 + resolved.Custom.Count);
         if (resolved.Genre.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Genre));
         if (resolved.SubGenre.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.SubGenre));
         if (resolved.Bpm.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Bpm));
         if (resolved.Key.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Key));
         if (resolved.Energy.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Energy));
+        if (resolved.Mood.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Mood));
+        if (resolved.SetPosition.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.SetPosition));
         // Custom fields touched by mapping rules (TagFieldSource.Rules) need to be written too —
         // a `set: { tag.mood: "Driving" }` rule that ran in the engine but never produced a
         // TXXX:MOOD frame would silently lose the user's declarative intent.
@@ -224,6 +226,12 @@ public sealed class TagLibTagWriter : ITagWriter
                     break;
                 case nameof(TrackTags.Energy):
                     FrameMapper.WriteEnergy(file, resolved.Energy.Value, fieldMap);
+                    break;
+                case nameof(TrackTags.Mood):
+                    FrameMapper.WriteMood(file, resolved.Mood.Value, fieldMap);
+                    break;
+                case nameof(TrackTags.SetPosition):
+                    FrameMapper.WriteSetPosition(file, resolved.SetPosition.Value, fieldMap);
                     break;
                 default:
                     if (field.StartsWith("tag.", StringComparison.Ordinal))

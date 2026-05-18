@@ -96,6 +96,12 @@ internal static class ExplainHandler
             Energy: existing.Energy is null
                 ? ResolvedField.EmptyValue<int>()
                 : new ResolvedValueField<int>(existing.Energy, TagFieldSource.Existing, 1.0),
+            Mood: existing.Mood is null
+                ? ResolvedField.Empty<string>()
+                : new ResolvedField<string>(existing.Mood, TagFieldSource.Existing, 1.0),
+            SetPosition: existing.SetPosition is null
+                ? ResolvedField.Empty<string>()
+                : new ResolvedField<string>(existing.SetPosition, TagFieldSource.Existing, 1.0),
             Custom: new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase));
 
     private static void RenderReport(IAnsiConsole console, FileInfo file, TrackTags existing, MappingEvaluationResult result)

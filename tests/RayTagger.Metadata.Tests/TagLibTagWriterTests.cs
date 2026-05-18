@@ -90,6 +90,8 @@ public class TagLibTagWriterTests
                 Bpm: ResolvedField.EmptyValue<double>(),
                 Key: ResolvedField.Empty<MusicalKey>(),
                 Energy: ResolvedField.EmptyValue<int>(),
+                Mood: ResolvedField.Empty<string>(),
+                SetPosition: ResolvedField.Empty<string>(),
                 Custom: new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["MOOD"] = new ResolvedField<string>("Driving", TagFieldSource.Rules, 1.0),
@@ -123,6 +125,8 @@ public class TagLibTagWriterTests
                 Bpm: ResolvedField.EmptyValue<double>(),
                 Key: ResolvedField.Empty<MusicalKey>(),
                 Energy: ResolvedField.EmptyValue<int>(),
+                Mood: ResolvedField.Empty<string>(),
+                SetPosition: ResolvedField.Empty<string>(),
                 Custom: new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["REPLAYGAIN_TRACK_GAIN"] = new ResolvedField<string>("-6.2 dB", TagFieldSource.Existing, 1.0),
@@ -146,5 +150,7 @@ public class TagLibTagWriterTests
         Bpm: new ResolvedValueField<double>(128.0, TagFieldSource.Rules, 1.0),
         Key: new ResolvedField<MusicalKey>(new MusicalKey("Am", "8A"), TagFieldSource.Rules, 1.0),
         Energy: new ResolvedValueField<int>(8, TagFieldSource.Rules, 1.0),
+        Mood: ResolvedField.Empty<string>(),
+        SetPosition: ResolvedField.Empty<string>(),
         Custom: new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase));
 }

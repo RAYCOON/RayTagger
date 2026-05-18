@@ -22,7 +22,7 @@ public static class MappingRulesLoader
         .WithNamingConvention(UnderscoredNamingConvention.Instance)
         .Build();
 
-    public static MappingRuleSet Load(string path)
+    public static MappingRuleSet Load(string path, Taxonomy? taxonomy = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
@@ -33,11 +33,16 @@ public static class MappingRulesLoader
         }
 
         var yaml = File.ReadAllText(fullPath);
-        return LoadFromString(yaml, fullPath);
+        return LoadFromString(yaml, fullPath, taxonomy);
     }
 
-    /// <summary>In-memory variant for tests and callers that already have the YAML text.</summary>
-    public static MappingRuleSet LoadFromString(string yaml, string sourceDescription = "(in-memory)")
+    /// <summary>
+    /// In-memory variant for tests and callers that already have the YAML text. When
+    /// <paramref name="taxonomy"/> is supplied and <c>taxonomy.Enforce</c> is true, every
+    /// <c>set: { genre|subgenre|mood|set_position: X }</c> value is checked against the
+    /// allowlist and rejected at load time.
+    /// </summary>
+    public static MappingRuleSet LoadFromString(string yaml, string sourceDescription = "(in-memory)", Taxonomy? taxonomy = null)
     {
         ArgumentNullException.ThrowIfNull(yaml);
 
@@ -62,6 +67,11 @@ public static class MappingRulesLoader
         var errors = new List<ConfigurationError>();
         var ruleSet = BuildRuleSet(root, errors);
 
+        if (taxonomy is { Enforce: true })
+        {
+            EnforceTaxonomy(ruleSet, taxonomy, errors);
+        }
+
         if (errors.Count > 0)
         {
             throw new ConfigurationException(
@@ -70,6 +80,47 @@ public static class MappingRulesLoader
         }
 
         return ruleSet;
+    }
+
+    /// <summary>
+    /// When <c>taxonomy.enforce</c> is true, every literal in a <c>set:</c> block is checked
+    /// against the corresponding allowlist. Empty strings (clear-the-field intent) pass through.
+    /// </summary>
+    private static void EnforceTaxonomy(MappingRuleSet ruleSet, Taxonomy taxonomy, List<ConfigurationError> errors)
+    {
+        var genreSet = new HashSet<string>(taxonomy.Genres, StringComparer.OrdinalIgnoreCase);
+        var moodSet = new HashSet<string>(taxonomy.Moods, StringComparer.OrdinalIgnoreCase);
+        var setPositionSet = new HashSet<string>(taxonomy.SetPositions, StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < ruleSet.Rules.Count; i++)
+        {
+            var rule = ruleSet.Rules[i];
+            var prefix = $"rules[{i}].set";
+            if (!string.IsNullOrEmpty(rule.Set.Genre) && !genreSet.Contains(rule.Set.Genre))
+            {
+                errors.Add(new ConfigurationError($"{prefix}.genre",
+                    $"Genre '{rule.Set.Genre}' is not declared in the taxonomy."));
+            }
+            if (!string.IsNullOrEmpty(rule.Set.Subgenre) && !string.IsNullOrEmpty(rule.Set.Genre))
+            {
+                if (taxonomy.Subgenres.TryGetValue(rule.Set.Genre, out var allowed)
+                    && !allowed.Contains(rule.Set.Subgenre, StringComparer.OrdinalIgnoreCase))
+                {
+                    errors.Add(new ConfigurationError($"{prefix}.subgenre",
+                        $"Sub-genre '{rule.Set.Subgenre}' is not declared under genre '{rule.Set.Genre}'."));
+                }
+            }
+            if (!string.IsNullOrEmpty(rule.Set.Mood) && !moodSet.Contains(rule.Set.Mood))
+            {
+                errors.Add(new ConfigurationError($"{prefix}.mood",
+                    $"Mood '{rule.Set.Mood}' is not declared in taxonomy.moods."));
+            }
+            if (!string.IsNullOrEmpty(rule.Set.SetPosition) && !setPositionSet.Contains(rule.Set.SetPosition))
+            {
+                errors.Add(new ConfigurationError($"{prefix}.set_position",
+                    $"Set position '{rule.Set.SetPosition}' is not declared in taxonomy.set_positions."));
+            }
+        }
     }
 
     private static readonly string[] KnownRootKeys = ["version", "defaults", "rules"];
@@ -437,6 +488,18 @@ public static class MappingRulesLoader
                 case "subgenre":
                     set.Subgenre = entry.Value as string;
                     break;
+                case "mood":
+                    set.Mood = entry.Value as string;
+                    break;
+                case "set_position":
+                    set.SetPosition = entry.Value as string;
+                    break;
+                case "normalise_genre":
+                    set.NormaliseGenre = ParseBoolish(entry.Value, $"{pathPrefix}.{key}", errors);
+                    break;
+                case "bpm_transform":
+                    set.BpmTransform = ParseBpmTransform(entry.Value, $"{pathPrefix}.{key}", errors);
+                    break;
                 case "add_keyword":
                     set.AddKeyword = entry.Value as string;
                     break;
@@ -465,13 +528,33 @@ public static class MappingRulesLoader
                     {
                         errors.Add(new ConfigurationError(
                             $"{pathPrefix}.{key}",
-                            $"Unknown set key '{key}'. Allowed: genre, subgenre, add_keyword, tag.<name>."));
+                            $"Unknown set key '{key}'. Allowed: genre, subgenre, mood, set_position, " +
+                            "normalise_genre, bpm_transform, add_keyword, tag.<name>."));
                     }
                     break;
             }
         }
 
         return set;
+    }
+
+    private static bool ParseBoolish(object? value, string path, List<ConfigurationError> errors)
+    {
+        if (value is string s && bool.TryParse(s, out var parsed))
+        {
+            return parsed;
+        }
+        errors.Add(new ConfigurationError(path, $"Expected 'true' or 'false', got '{value}'."));
+        return false;
+    }
+
+    private static BpmTransform? ParseBpmTransform(object? value, string path, List<ConfigurationError> errors)
+    {
+        if (value is not string s) return Record<BpmTransform?>(errors, path, "Expected 'double' or 'half'.", null);
+        if (s.Equals("double", StringComparison.OrdinalIgnoreCase)) return BpmTransform.Double;
+        if (s.Equals("half", StringComparison.OrdinalIgnoreCase)) return BpmTransform.Half;
+        if (s.Equals("none", StringComparison.OrdinalIgnoreCase)) return BpmTransform.None;
+        return Record<BpmTransform?>(errors, path, $"Expected 'double' or 'half', got '{s}'.", null);
     }
 
     private static OnMatch ParseOnMatch(string value, string path, List<ConfigurationError> errors) =>

@@ -1,4 +1,5 @@
 using RayTagger.Core.IO;
+using RayTagger.Core.Mapping;
 using YamlDotNet.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -98,8 +99,33 @@ public static class TaggerOptionsLoader
         }
 
         NormalisePaths(options, configDirectory);
+        LoadTaxonomyIfConfigured(options, sourceDescription);
 
         return options;
+    }
+
+    /// <summary>
+    /// Loads the external taxonomy file when <c>taxonomy.file</c> is configured and stores the
+    /// parsed snapshot back on <see cref="TaxonomyOptions.Loaded"/>. Failures surface as a
+    /// <see cref="ConfigurationException"/> so the user sees the problem at config load,
+    /// not the first time a rule tries to normalise something.
+    /// </summary>
+    private static void LoadTaxonomyIfConfigured(TaggerOptions options, string sourceDescription)
+    {
+        if (string.IsNullOrWhiteSpace(options.Taxonomy.File))
+        {
+            return;
+        }
+        try
+        {
+            options.Taxonomy.Loaded = TaxonomyLoader.Load(options.Taxonomy.File);
+        }
+        catch (ConfigurationException ex)
+        {
+            throw new ConfigurationException(
+                $"Taxonomy file referenced by {sourceDescription} failed to load: {ex.Message}",
+                ex);
+        }
     }
 
     private static IReadOnlyDictionary<string, string>? LoadDotEnvIfPresent(string? explicitPath, string configDirectory)
@@ -142,6 +168,11 @@ public static class TaggerOptionsLoader
         if (!string.IsNullOrWhiteSpace(options.NativeTools.ManifestFile))
         {
             options.NativeTools.ManifestFile = PathNormalizer.Normalize(options.NativeTools.ManifestFile, configDirectory);
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.Taxonomy.File))
+        {
+            options.Taxonomy.File = PathNormalizer.Normalize(options.Taxonomy.File, configDirectory);
         }
     }
 }

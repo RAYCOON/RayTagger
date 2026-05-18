@@ -3,24 +3,29 @@ using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using RayTagger.Ui.Services;
 
 namespace RayTagger.Ui.ViewModels;
 
 /// <summary>
-/// Root view-model. Currently a thin shell owning the <see cref="ScanViewModel"/> and the folder
-/// picker that feeds it. Will grow rule-editor / settings child VMs in later iterations.
+/// Root view-model. Currently a thin shell owning the <see cref="ScanViewModel"/>, the
+/// <see cref="UiToolStatusReporter"/> the status panel binds to, and the folder picker.
+/// Will grow rule-editor / settings child VMs in later iterations.
 /// </summary>
 public sealed partial class MainWindowViewModel : ObservableObject
 {
     private readonly ILogger<MainWindowViewModel> _logger;
 
     public ScanViewModel Scan { get; }
+    public UiToolStatusReporter ToolStatus { get; }
 
-    public MainWindowViewModel(ScanViewModel scan, ILogger<MainWindowViewModel> logger)
+    public MainWindowViewModel(ScanViewModel scan, UiToolStatusReporter toolStatus, ILogger<MainWindowViewModel> logger)
     {
         ArgumentNullException.ThrowIfNull(scan);
+        ArgumentNullException.ThrowIfNull(toolStatus);
         ArgumentNullException.ThrowIfNull(logger);
         Scan = scan;
+        ToolStatus = toolStatus;
         _logger = logger;
     }
 
