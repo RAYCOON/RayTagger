@@ -66,6 +66,18 @@ COMMIT_MSG="$(git log -1 --format=%s HEAD)"
 
 echo "== Building Essentia $COMMIT_SHORT ($COMMIT_DATE) — '$COMMIT_MSG' =="
 
+# --- Source patches -----------------------------------------------------------
+# Essentia's src/examples/wscript imports distutils.sysconfig but never uses it.
+# That dead import crashes on Python 3.12+ (distutils removed from stdlib);
+# affects MSYS2 Windows (ships Python 3.14) and any future Unix runner where
+# we drop the actions/setup-python pin to 3.11. Safe to strip everywhere.
+sed -i.bak '/^import distutils\.sysconfig$/d' "$ESSENTIA_REPO/src/examples/wscript"
+
+# Force UTF-8 stdout so Essentia's wscript print('→ ...') doesn't trip Windows'
+# default cp1252 codec. Harmless on Unix.
+export PYTHONIOENCODING=utf-8
+export PYTHONUTF8=1
+
 # --- Configure + build -------------------------------------------------------
 WAF_ARGS=(--mode=release --with-examples --build-static)
 
