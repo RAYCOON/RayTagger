@@ -75,9 +75,11 @@ sed -i.bak '/^import distutils\.sysconfig$/d' "$ESSENTIA_REPO/src/examples/wscri
 
 # Essentia's top wscript assumes sys.platform == 'win32' implies MSVC and
 # injects '-W2 -EHsc' compiler flags. With MinGW64 on Windows that breaks
-# (g++ rejects MSVC-style switches). Swap in the Unix flag set; harmless on
-# non-Windows where this branch isn't taken anyway.
-sed -i.bak "s|ctx\.env\.CXXFLAGS += \[.-W2., .-EHsc.\]|ctx.env.CXXFLAGS += ['-pipe', '-Wall']  # MinGW64 patch|" "$ESSENTIA_REPO/wscript"
+# (g++ rejects MSVC-style switches). Swap in the Unix flag set plus the
+# Windows math-defines guard: MinGW's <cmath> hides M_PI / M_LN2 / friends
+# unless _USE_MATH_DEFINES is set BEFORE the header is included, which
+# Essentia's source doesn't do. Harmless on non-Windows.
+sed -i.bak "s|ctx\.env\.CXXFLAGS += \[.-W2., .-EHsc.\]|ctx.env.CXXFLAGS += ['-pipe', '-Wall', '-D_USE_MATH_DEFINES']  # MinGW64 patch|" "$ESSENTIA_REPO/wscript"
 
 # Force UTF-8 stdout so Essentia's wscript print('→ ...') doesn't trip Windows'
 # default cp1252 codec. Harmless on Unix.
