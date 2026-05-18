@@ -41,8 +41,17 @@ jobs:
         include:
           - rid: osx-arm64
             runner: macos-14
-          - rid: osx-x64
-            runner: macos-13
+          # osx-x64 (macos-13) is currently DISABLED. Reasons:
+          #   1. GitHub is winding down macos-13 Intel runners; queues for private
+          #      repos can sit for hours or never pick up.
+          #   2. macOS Intel hardware was discontinued by Apple in late 2022; the
+          #      Apple-Silicon arm64 build covers ~all new installs.
+          # Intel-Mac users install Essentia manually per docs/INSTALL.md until we
+          # either (a) re-enable when the repo goes public (better runner allocation),
+          # or (b) move to a cross-compile-from-arm64 strategy on macos-14.
+          # - rid: osx-x64
+          #   runner: macos-13
+          #
           # Need FFmpeg 5.1+ for the ch_layout / av_opt_set_chlayout API the current
           # Essentia source assumes. Ubuntu 22.04 ships FFmpeg 4.4 → libavcodec headers
           # are missing those symbols. Ubuntu 24.04 has FFmpeg 6.1.
