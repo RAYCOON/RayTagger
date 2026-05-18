@@ -106,7 +106,13 @@ case "$TARGET_RID" in
     ;;
   win-x64)
     # MSYS2 / MinGW64 toolchain. pkg-config files live under /mingw64/lib/pkgconfig
-    # (pacman puts them there). Same C++17 reason as macOS.
+    # (pacman puts them there).
+    #
+    # C++14 (not 17): Eigen 5 needs ≥ C++14 (same reason as macOS). We can't use
+    # C++17 here because <cstddef> then exposes std::byte, which collides with
+    # the `typedef unsigned char byte` Windows' COM headers (rpcndr.h, oaidl.h)
+    # bring in transitively via FFmpeg. Essentia itself doesn't use any
+    # C++17-only features, so the downgrade is safe.
     #
     # Force gcc/g++ explicitly: the windows-latest runner has MSVC installed; waf
     # would otherwise pick cl.exe — which can't find GCC-style <map> headers and
@@ -124,7 +130,7 @@ case "$TARGET_RID" in
     export CC=gcc.exe
     export CXX=g++.exe
     export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    WAF_ARGS+=(--std=c++17 --check-c-compiler=gcc --check-cxx-compiler=g++)
+    WAF_ARGS+=(--std=c++14 --check-c-compiler=gcc --check-cxx-compiler=g++)
 
     # ↓ Diagnostic block: previous run showed g++ IS on PATH but waf still
     # claimed "g++ not found" — meaning the actual sanity *compile* fails. Run
