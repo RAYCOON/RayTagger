@@ -39,7 +39,10 @@ internal static class ExplainHandler
         {
             var configPath = configFile?.FullName ?? Path.Combine(Environment.CurrentDirectory, "tagger.yaml");
             options = TaggerOptionsLoader.Load(configPath);
-            rules = MappingRulesLoader.Load(options.Mapping.RulesFile);
+            // Pass the loaded taxonomy so the rules loader enforces allowlists and the engine
+            // can resolve normalise_genre aliases below. Otherwise `explain` would silently
+            // diverge from `scan`.
+            rules = MappingRulesLoader.Load(options.Mapping.RulesFile, options.Taxonomy.Loaded);
         }
         catch (ConfigurationException ex)
         {
@@ -71,7 +74,7 @@ internal static class ExplainHandler
         var resolved = BuildResolvedFromExisting(existing);
 
         var engine = new MappingRuleEngine();
-        var result = engine.Evaluate(resolved, existing, trackFile, rules);
+        var result = engine.Evaluate(resolved, existing, trackFile, rules, options.Taxonomy.Loaded);
 
         RenderReport(console, fileArg, existing, result);
 
@@ -117,6 +120,8 @@ internal static class ExplainHandler
         inputs.AddRow("bpm", existing.Bpm?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "—");
         inputs.AddRow("key", Markup.Escape(existing.Key?.Standard ?? "—"));
         inputs.AddRow("energy", existing.Energy?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "—");
+        inputs.AddRow("mood", Markup.Escape(existing.Mood ?? "—"));
+        inputs.AddRow("set_position", Markup.Escape(existing.SetPosition ?? "—"));
         console.Write(inputs);
 
         if (result.Applied.Count == 0)
@@ -146,6 +151,13 @@ internal static class ExplainHandler
         final.AddColumn("Source");
         final.AddRow("genre", Markup.Escape(result.Tags.Genre.Value ?? "—"), result.Tags.Genre.Source.ToString());
         final.AddRow("subgenre", Markup.Escape(result.Tags.SubGenre.Value ?? "—"), result.Tags.SubGenre.Source.ToString());
+        final.AddRow("bpm",
+            result.Tags.Bpm.Value?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "—",
+            result.Tags.Bpm.Source.ToString());
+        final.AddRow("mood", Markup.Escape(result.Tags.Mood.Value ?? "—"), result.Tags.Mood.Source.ToString());
+        final.AddRow("set_position",
+            Markup.Escape(result.Tags.SetPosition.Value ?? "—"),
+            result.Tags.SetPosition.Source.ToString());
         foreach (var (key, field) in result.Tags.Custom)
         {
             final.AddRow($"tag.{key}", Markup.Escape(field.Value ?? "—"), field.Source.ToString());

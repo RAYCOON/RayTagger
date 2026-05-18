@@ -19,19 +19,26 @@ public static class NativeToolsBootstrapFactory
     /// found). When no manifest is available, the resolver still works — it just can't fall back
     /// to a download, so missing binaries continue to disable their dimensions.
     /// </summary>
-#pragma warning disable CA2000  // HttpClient lifecycle: process-scoped; see explanation below.
+    /// <remarks>
+    /// The <see cref="HttpClient"/> is sourced from <see cref="IHttpClientFactory"/> by the caller
+    /// (typically <see cref="ServiceCollectionComposer.NativeToolsBootstrapHttpClient"/>) and the
+    /// factory does not own its lifetime. A fresh <c>new HttpClient()</c> per scan would leak
+    /// socket pool entries on every UI scan; the IHttpClientFactory pooling avoids that.
+    /// </remarks>
     public static NativeToolResolver BuildResolver(
         NativeToolsOptions opts,
         IAnalysisToolProbe probe,
+        HttpClient httpClient,
         ILoggerFactory loggerFactory,
         IToolStatusReporter statusReporter)
     {
         ArgumentNullException.ThrowIfNull(opts);
         ArgumentNullException.ThrowIfNull(probe);
+        ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(loggerFactory);
         ArgumentNullException.ThrowIfNull(statusReporter);
 
-        var bootstrapper = BuildBootstrapper(opts, loggerFactory, statusReporter);
+        var bootstrapper = BuildBootstrapper(opts, httpClient, loggerFactory, statusReporter);
         return new NativeToolResolver(
             probe,
             bootstrapper,
@@ -39,12 +46,19 @@ public static class NativeToolsBootstrapFactory
             loggerFactory.CreateLogger<NativeToolResolver>());
     }
 
+    /// <summary>
+    /// Builds just the bootstrapper (manifest reader + downloader) without the resolver chain.
+    /// Used by the <c>setup</c> verb which walks <see cref="INativeToolBootstrapper.KnownTools"/>
+    /// directly.
+    /// </summary>
     public static INativeToolBootstrapper? BuildBootstrapper(
         NativeToolsOptions opts,
+        HttpClient httpClient,
         ILoggerFactory loggerFactory,
         IToolStatusReporter statusReporter)
     {
         ArgumentNullException.ThrowIfNull(opts);
+        ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(loggerFactory);
         ArgumentNullException.ThrowIfNull(statusReporter);
 
@@ -67,19 +81,12 @@ public static class NativeToolsBootstrapFactory
             return null;
         }
 
-        // 5-minute timeout: Essentia / fpcalc archives run 5-30 MB. HttpClient ownership matches
-        // the lookup-provider clients — process-scoped, factory caller is responsible for shutdown
-        // (which on a short-lived CLI means "the OS does it").
-        var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("RayTagger/0.1 (+https://github.com/RAYCOON/raytagger)");
-
         return new NativeToolBootstrapper(
             manifest,
             new UserDataDirectoryProvider(),
-            http,
+            httpClient,
             loggerFactory.CreateLogger<NativeToolBootstrapper>());
     }
-#pragma warning restore CA2000
 
     private static string? ResolveManifestPath(NativeToolsOptions opts)
     {

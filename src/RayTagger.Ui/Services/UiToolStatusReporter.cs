@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using Avalonia.Threading;
-using CommunityToolkit.Mvvm.ComponentModel;
 using RayTagger.Analysis.Bootstrap;
 using RayTagger.Hosting;
 
@@ -8,10 +7,12 @@ namespace RayTagger.Ui.Services;
 
 /// <summary>
 /// <see cref="IToolStatusReporter"/> that pushes status entries into an
-/// <see cref="ObservableCollection{T}"/> bound to the UI's tool-status panel. The factory writes
-/// to this from a worker thread, so every mutation is marshalled to the dispatcher.
+/// <see cref="ObservableCollection{T}"/> bound to the UI's tool-status panel. Both
+/// <see cref="Reset"/> and the per-event helpers funnel through one marshal helper, so a
+/// caller can invoke them from any thread and the dispatcher serialises everything in
+/// call-order. <c>ObservableCollection</c> changes still require the UI thread.
 /// </summary>
-public sealed class UiToolStatusReporter : ObservableObject, IToolStatusReporter
+public sealed class UiToolStatusReporter : IToolStatusReporter
 {
     public ObservableCollection<ToolStatusEntry> Entries { get; } = [];
 
@@ -48,28 +49,14 @@ public sealed class UiToolStatusReporter : ObservableObject, IToolStatusReporter
         Add(new ToolStatusEntry(Kind: ToolStatusKind.Note, Label: message, Detail: null));
 
     /// <summary>Clears every entry. Call before a new scan run to refresh the panel.</summary>
-    public void Reset()
-    {
-        if (Dispatcher.UIThread.CheckAccess())
-        {
-            Entries.Clear();
-        }
-        else
-        {
-            Dispatcher.UIThread.Post(Entries.Clear);
-        }
-    }
+    public void Reset() => RunOnUi(Entries.Clear);
 
-    private void Add(ToolStatusEntry entry)
+    private void Add(ToolStatusEntry entry) => RunOnUi(() => Entries.Add(entry));
+
+    private static void RunOnUi(Action action)
     {
-        if (Dispatcher.UIThread.CheckAccess())
-        {
-            Entries.Add(entry);
-        }
-        else
-        {
-            Dispatcher.UIThread.Post(() => Entries.Add(entry));
-        }
+        if (Dispatcher.UIThread.CheckAccess()) action();
+        else Dispatcher.UIThread.Post(action);
     }
 }
 

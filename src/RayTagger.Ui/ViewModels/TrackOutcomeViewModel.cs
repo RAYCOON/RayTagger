@@ -1,4 +1,3 @@
-using CommunityToolkit.Mvvm.ComponentModel;
 using RayTagger.Core.Models;
 
 namespace RayTagger.Ui.ViewModels;
@@ -8,7 +7,12 @@ namespace RayTagger.Ui.ViewModels;
 /// pipeline proposes (or actually wrote in non-dry-run mode), plus enough provenance for the user
 /// to understand WHY each field changed.
 /// </summary>
-public sealed partial class TrackOutcomeViewModel : ObservableObject
+/// <remarks>
+/// All properties are set in the constructor — no <c>ObservableObject</c> base needed since the
+/// row never mutates after the pipeline yields it. Bindings read the values once and never
+/// re-subscribe. Add it back if Apply / Revert columns gain mutable state.
+/// </remarks>
+public sealed class TrackOutcomeViewModel
 {
     public string Path { get; }
     public string FileName { get; }

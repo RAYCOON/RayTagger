@@ -76,6 +76,8 @@ public sealed class BackupSidecarWriter
                 ["key_standard"] = tags.Key?.Standard,
                 ["key_camelot"] = tags.Key?.Camelot,
                 ["energy"] = tags.Energy,
+                ["mood"] = tags.Mood,
+                ["set_position"] = tags.SetPosition,
                 ["custom"] = tags.Custom.ToDictionary(kv => kv.Key, kv => (object?)kv.Value, StringComparer.OrdinalIgnoreCase),
             },
         };

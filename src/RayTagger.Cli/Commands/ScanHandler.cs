@@ -52,16 +52,17 @@ internal static class ScanHandler
 
         ApplyCliOverrides(options, dryRun: dryRun, write: write);
 
-        using var loggerFactory = SerilogSetup.Build(options.Logging, verboseOverride: verbose);
-
         var services = new ServiceCollection();
-        services.AddSingleton<ILoggerFactory>(loggerFactory);
+        // Register the Serilog-backed factory via delegate so the DI container owns its lifetime
+        // (and the disposal that goes with it). Hand-rolling `using var` here on top of the same
+        // registration disposes the factory twice with newer Microsoft.Extensions.DI builds.
+        services.AddSingleton<ILoggerFactory>(_ => SerilogSetup.Build(options.Logging, verboseOverride: verbose));
         services.AddLogging();
         services.AddRayTaggerHosting();
         await using var serviceProvider = services.BuildServiceProvider();
 
         var statusReporter = new SpectreToolStatusReporter(console);
-        var factory = new PipelineFactory(serviceProvider);
+        var factory = serviceProvider.GetRequiredService<PipelineFactory>();
         var built = await factory.BuildAsync(options, statusReporter, cancellationToken).ConfigureAwait(false);
 
         var pipeline = new TagPipeline(
@@ -72,7 +73,7 @@ internal static class ScanHandler
             built.LookupRunner,
             serviceProvider.GetRequiredService<IMappingRuleEngine>(),
             serviceProvider.GetRequiredService<ISortService>(),
-            loggerFactory.CreateLogger<TagPipeline>());
+            serviceProvider.GetRequiredService<ILogger<TagPipeline>>());
 
         var renderer = new OutcomeRenderer(console);
 

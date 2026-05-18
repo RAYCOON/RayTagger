@@ -15,12 +15,13 @@ namespace RayTagger.Ui.ViewModels;
 /// kicks off the scan via <see cref="ScanCoordinator"/>, and accumulates outcomes into an
 /// <see cref="ObservableCollection{T}"/> the DataGrid binds to.
 /// </summary>
-public sealed partial class ScanViewModel : ObservableObject
+public sealed partial class ScanViewModel : ObservableObject, IDisposable
 {
     private readonly ScanCoordinator _coordinator;
     private readonly ITagReader _reader;
     private readonly ILogger<ScanViewModel> _logger;
     private CancellationTokenSource? _cts;
+    private bool _disposed;
 
     [ObservableProperty]
     private string? _sourceDirectory;
@@ -117,6 +118,21 @@ public sealed partial class ScanViewModel : ObservableObject
     private void Cancel()
     {
         _cts?.Cancel();
+    }
+
+    /// <summary>
+    /// Disposes the last <see cref="CancellationTokenSource"/> the scan command allocated. The
+    /// VM itself is registered as Transient but held by <c>MainWindowViewModel</c> for the
+    /// window's lifetime — releasing the CTS on window-close prevents a handle leak when the
+    /// app loops (e.g. preview-driven multi-run workflows).
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+        _disposed = true;
     }
 
     private RayTagger.Core.Models.TrackTags SafeRead(string path)

@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RayTagger.Analysis;
 using RayTagger.Analysis.Bootstrap;
@@ -41,10 +42,21 @@ internal static class SetupHandler
             return ExitCodes.InvalidConfiguration;
         }
 
-        using var loggerFactory = SerilogSetup.Build(options.Logging, verboseOverride: verbose);
+        // Same DI pattern as ScanHandler: container owns the Serilog factory, and pools the
+        // bootstrap HttpClient through IHttpClientFactory.
+        var services = new ServiceCollection();
+        services.AddSingleton<ILoggerFactory>(_ => SerilogSetup.Build(options.Logging, verboseOverride: verbose));
+        services.AddLogging();
+        services.AddRayTaggerHosting();
+        await using var serviceProvider = services.BuildServiceProvider();
+
+        var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+        var bootstrapHttp = httpClientFactory.CreateClient(ServiceCollectionComposer.NativeToolsBootstrapHttpClient);
 
         var statusReporter = new SpectreToolStatusReporter(console);
-        var bootstrapper = NativeToolsBootstrapFactory.BuildBootstrapper(options.NativeTools, loggerFactory, statusReporter);
+        var bootstrapper = NativeToolsBootstrapFactory.BuildBootstrapper(
+            options.NativeTools, bootstrapHttp, loggerFactory, statusReporter);
         if (bootstrapper is null)
         {
             console.MarkupLine("[red]Cannot run setup without a usable native-tools manifest. Copy samples/native-tools.example.yaml next to tagger.yaml and fill in URLs + SHA-256 hashes.[/]");
@@ -56,8 +68,7 @@ internal static class SetupHandler
             ClearCacheForKnownTools(bootstrapper, console);
         }
 
-        var probeRunner = new NativeProcessRunner(loggerFactory.CreateLogger<NativeProcessRunner>());
-        var probe = new AnalysisToolProbe(probeRunner);
+        var probe = new AnalysisToolProbe(serviceProvider.GetRequiredService<NativeProcessRunner>());
 
         var failures = 0;
         foreach (var tool in bootstrapper.KnownTools)

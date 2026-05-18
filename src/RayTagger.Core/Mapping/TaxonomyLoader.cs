@@ -133,7 +133,11 @@ public static class TaxonomyLoader
                         $"Sub-genre '{entry.Subgenre}' is not declared under genre '{entry.Genre}'."));
                     continue;
                 }
-                var aliases = (entry.Aliases ?? []).Where(a => !string.IsNullOrWhiteSpace(a)).ToList();
+                // Trim each alias so " Tech House " in YAML matches "Tech House" on a track.
+                var aliases = (entry.Aliases ?? [])
+                    .Where(a => !string.IsNullOrWhiteSpace(a))
+                    .Select(a => a.Trim())
+                    .ToList();
                 if (aliases.Count == 0)
                 {
                     errors.Add(new ConfigurationError($"{prefix}.aliases",
@@ -148,6 +152,16 @@ public static class TaxonomyLoader
                 });
                 foreach (var alias in aliases)
                 {
+                    // An alias that collides with a canonical genre would silently mutate an
+                    // already-canonical track on the next normalise_genre run — a no-op at best,
+                    // a quiet sub-genre overwrite at worst.
+                    if (genreSet.Contains(alias)
+                        && !alias.Equals(entry.Genre, StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors.Add(new ConfigurationError($"{prefix}.aliases",
+                            $"Alias '{alias}' is also declared as a canonical genre — would shadow it on normalise."));
+                        continue;
+                    }
                     if (!byAlias.TryAdd(alias, (entry.Genre, entry.Subgenre ?? string.Empty)))
                     {
                         errors.Add(new ConfigurationError($"{prefix}.aliases",

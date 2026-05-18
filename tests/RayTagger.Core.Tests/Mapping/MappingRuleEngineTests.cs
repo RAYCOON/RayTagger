@@ -372,6 +372,102 @@ public class MappingRuleEngineTests
         result.Tags.Custom["keywords"].Value.Should().Be("Tagged;Reviewed");
     }
 
+    // ===== Four-axis additions: normalise_genre / bpm_transform / mood / set_position ================
+
+    [Fact]
+    public void Bpm_transform_double_multiplies_existing_bpm_with_rules_source()
+    {
+        var rule = MakeRule("dnb-halftime",
+            when: new WhenClause { Bpm = new NumericRange { Min = 60, Max = 99 } },
+            set: new SetClause { BpmTransform = BpmTransform.Double });
+
+        var result = EvaluateSingle(rule, tags: WithBpm(87));
+
+        result.Tags.Bpm.Value.Should().Be(174.0);
+        result.Tags.Bpm.Source.Should().Be(TagFieldSource.Rules);
+    }
+
+    [Fact]
+    public void Bpm_transform_is_a_noop_when_existing_bpm_is_zero()
+    {
+        // Regression: HasValue is true for 0.0; without an explicit > 0 guard the engine would
+        // silently stamp `0 * 2 = 0` as a Rules-sourced value and clobber a valid TBPM frame.
+        var rule = MakeRule("would-double",
+            when: new WhenClause(),  // catch-all
+            set: new SetClause { BpmTransform = BpmTransform.Double });
+
+        var result = EvaluateSingle(rule, tags: WithBpm(0));
+
+        result.Tags.Bpm.Value.Should().Be(0);  // unchanged
+        result.Tags.Bpm.Source.Should().NotBe(TagFieldSource.Rules);
+    }
+
+    [Fact]
+    public void Bpm_transform_is_a_noop_when_bpm_is_missing()
+    {
+        var rule = MakeRule("would-double", when: new WhenClause(),
+            set: new SetClause { BpmTransform = BpmTransform.Double });
+
+        var result = EvaluateSingle(rule, tags: ResolvedTrackTags.Empty);
+
+        result.Tags.Bpm.Value.Should().BeNull();
+        result.Tags.Bpm.Source.Should().NotBe(TagFieldSource.Rules);
+    }
+
+    [Fact]
+    public void Normalise_genre_resolves_alias_to_canonical_pair_with_rules_source()
+    {
+        var taxonomy = new Taxonomy
+        {
+            Genres = ["House"],
+            Subgenres = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["House"] = ["Tech"],
+            },
+            NormaliseByAlias = new Dictionary<string, (string Genre, string Subgenre)>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Tech House"] = ("House", "Tech"),
+            },
+        };
+        var rule = MakeRule("normalise", when: new WhenClause { Genre = GenrePattern.Any },
+            set: new SetClause { NormaliseGenre = true });
+
+        var ruleset = new MappingRuleSet { Rules = [rule] };
+        var result = Engine.Evaluate(WithGenre("Tech House"), existing: null, DefaultFile, ruleset, taxonomy);
+
+        result.Tags.Genre.Value.Should().Be("House");
+        result.Tags.Genre.Source.Should().Be(TagFieldSource.Rules);
+        result.Tags.SubGenre.Value.Should().Be("Tech");
+        result.Tags.SubGenre.Source.Should().Be(TagFieldSource.Rules);
+    }
+
+    [Fact]
+    public void Normalise_genre_is_a_noop_when_taxonomy_is_null()
+    {
+        var rule = MakeRule("normalise", when: new WhenClause { Genre = GenrePattern.Any },
+            set: new SetClause { NormaliseGenre = true });
+
+        var result = EvaluateSingle(rule, tags: WithGenre("Tech House"));
+
+        result.Tags.Genre.Value.Should().Be("Tech House");
+        result.Tags.Genre.Source.Should().Be(TagFieldSource.Existing);
+    }
+
+    [Fact]
+    public void Mood_and_set_position_are_stamped_with_rules_source()
+    {
+        var rule = MakeRule("classify",
+            when: new WhenClause { Bpm = new NumericRange { Min = 120, Max = 130 } },
+            set: new SetClause { Mood = "Driving", SetPosition = "Peak Time" });
+
+        var result = EvaluateSingle(rule, tags: WithBpm(126));
+
+        result.Tags.Mood.Value.Should().Be("Driving");
+        result.Tags.Mood.Source.Should().Be(TagFieldSource.Rules);
+        result.Tags.SetPosition.Value.Should().Be("Peak Time");
+        result.Tags.SetPosition.Source.Should().Be(TagFieldSource.Rules);
+    }
+
     // ===== Helpers ===================================================================================
 
     private static MappingRule MakeRule(string name, WhenClause when, SetClause set) =>

@@ -274,11 +274,14 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
             changed.Add("set_position");
         }
 
-        if (set.BpmTransform is BpmTransform t and not BpmTransform.None && tags.Bpm.Value.HasValue)
+        // BpmTransform on a 0/missing BPM would silently stamp 0 as a Rules-sourced value
+        // (and then the writer would overwrite a perfectly valid TBPM frame with 0). Require
+        // a positive BPM before the transform fires.
+        if (set.BpmTransform is BpmTransform t and not BpmTransform.None
+            && tags.Bpm.Value is double bpmValue && bpmValue > 0)
         {
             var factor = t == BpmTransform.Double ? 2.0 : 0.5;
-            var transformed = tags.Bpm.Value.Value * factor;
-            newBpm = new ResolvedValueField<double>(transformed, TagFieldSource.Rules, 1.0);
+            newBpm = new ResolvedValueField<double>(bpmValue * factor, TagFieldSource.Rules, 1.0);
             changed.Add("bpm");
         }
 

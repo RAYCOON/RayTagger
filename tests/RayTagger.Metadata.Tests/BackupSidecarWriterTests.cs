@@ -103,6 +103,54 @@ public sealed class BackupSidecarWriterTests : IDisposable
     }
 
     [Fact]
+    public void Sidecar_round_trips_mood_and_set_position()
+    {
+        // Regression: Mood + SetPosition landed in the model after the sidecar schema was first
+        // shipped. Without serialising them here, RestoreHandler would wrap snapshot.Mood (null)
+        // as TagFieldSource.Rules and the writer would clear any existing on-disk MOOD frame.
+        var audioPath = Path.Combine(_tempDir, "song.mp3");
+        File.WriteAllText(audioPath, "fake");
+
+        var tags = new TrackTags(
+            Title: "Strobelight",
+            Genre: "Techno",
+            SubGenre: "Berlin",
+            Mood: "Hypnotic",
+            SetPosition: "Peak Time");
+
+        var sidecarPath = _writer.Write(audioPath, tags);
+
+        var restored = new SidecarRestoreService().Read(sidecarPath);
+        restored.Mood.Should().Be("Hypnotic");
+        restored.SetPosition.Should().Be("Peak Time");
+    }
+
+    [Fact]
+    public void Sidecar_read_handles_pre_feature_sidecars_without_mood_and_set_position()
+    {
+        // A sidecar written before Mood/SetPosition support landed has no mood / set_position
+        // keys. The deserialiser should leave both as null so RestoreHandler can opt out of
+        // clearing on-disk values.
+        var sidecarPath = Path.Combine(_tempDir, "song.mp3.tagger.bak.20240101-000000-000.yaml");
+        File.WriteAllText(sidecarPath, """
+            schema_version: 1
+            audio_file: /tmp/song.mp3
+            backed_up_at_utc: 20240101-000000-000
+            tags:
+              title: Old
+              genre: House
+              sub_genre: Tech
+              bpm: 126
+              energy: 7
+            """);
+
+        var restored = new SidecarRestoreService().Read(sidecarPath);
+        restored.Mood.Should().BeNull();
+        restored.SetPosition.Should().BeNull();
+        restored.Genre.Should().Be("House");
+    }
+
+    [Fact]
     public void Custom_backup_directory_is_used_when_provided()
     {
         var audioPath = Path.Combine(_tempDir, "song.mp3");

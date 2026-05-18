@@ -117,14 +117,22 @@ internal static class RestoreHandler
             kv => new ResolvedField<string>(kv.Value, TagFieldSource.Rules, 1.0),
             StringComparer.OrdinalIgnoreCase);
 
+        // Mood + SetPosition fall back to Empty when the snapshot has no value: a pre-feature
+        // sidecar literally couldn't carry them, and forcing a null-Rules write would clear any
+        // value the file currently holds. New-format sidecars that DID record the field — even
+        // a non-null one — flow through as Rules and overwrite as expected.
         return new ResolvedTrackTags(
             Genre: new ResolvedField<string>(snapshot.Genre, TagFieldSource.Rules, 1.0),
             SubGenre: new ResolvedField<string>(snapshot.SubGenre, TagFieldSource.Rules, 1.0),
             Bpm: new ResolvedValueField<double>(snapshot.Bpm, TagFieldSource.Rules, 1.0),
             Key: new ResolvedField<MusicalKey>(snapshot.Key, TagFieldSource.Rules, 1.0),
             Energy: new ResolvedValueField<int>(snapshot.Energy, TagFieldSource.Rules, 1.0),
-            Mood: new ResolvedField<string>(snapshot.Mood, TagFieldSource.Rules, 1.0),
-            SetPosition: new ResolvedField<string>(snapshot.SetPosition, TagFieldSource.Rules, 1.0),
+            Mood: snapshot.Mood is null
+                ? ResolvedField.Empty<string>()
+                : new ResolvedField<string>(snapshot.Mood, TagFieldSource.Rules, 1.0),
+            SetPosition: snapshot.SetPosition is null
+                ? ResolvedField.Empty<string>()
+                : new ResolvedField<string>(snapshot.SetPosition, TagFieldSource.Rules, 1.0),
             Custom: custom);
     }
 
@@ -140,6 +148,8 @@ internal static class RestoreHandler
         table.AddRow("bpm", snapshot.Bpm?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "—");
         table.AddRow("key", Markup.Escape(snapshot.Key?.Standard ?? "—"));
         table.AddRow("energy", snapshot.Energy?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "—");
+        table.AddRow("mood", Markup.Escape(snapshot.Mood ?? "—"));
+        table.AddRow("set_position", Markup.Escape(snapshot.SetPosition ?? "—"));
         if (snapshot.Custom.Count > 0)
         {
             table.AddRow("custom", Markup.Escape(string.Join(", ", snapshot.Custom.Keys)));

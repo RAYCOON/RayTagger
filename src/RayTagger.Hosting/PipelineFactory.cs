@@ -48,8 +48,11 @@ public sealed class PipelineFactory
         var httpClientFactory = _services.GetRequiredService<IHttpClientFactory>();
         var dataDirs = _services.GetRequiredService<IUserDataDirectoryProvider>();
 
+        // Pooled, factory-owned HttpClient for the binary downloader — keeps the per-scan
+        // socket-pool reuse behaviour the lookup clients already get.
+        var bootstrapHttp = httpClientFactory.CreateClient(ServiceCollectionComposer.NativeToolsBootstrapHttpClient);
         var resolver = NativeToolsBootstrapFactory.BuildResolver(
-            options.NativeTools, probe, loggerFactory, statusReporter);
+            options.NativeTools, probe, bootstrapHttp, loggerFactory, statusReporter);
 
         var analysisRunner = await BuildAnalysisRunnerAsync(
             options.Analysis, runner, resolver, loggerFactory, statusReporter, cancellationToken)

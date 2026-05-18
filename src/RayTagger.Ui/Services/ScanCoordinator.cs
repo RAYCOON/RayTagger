@@ -17,7 +17,6 @@ namespace RayTagger.Ui.Services;
 /// </summary>
 public sealed class ScanCoordinator
 {
-    private readonly IServiceProvider _services;
     private readonly IFileDiscoveryService _discovery;
     private readonly ITagReaderAdapter _reader;
     private readonly ITagWriterAdapter _writer;
@@ -29,7 +28,6 @@ public sealed class ScanCoordinator
     private readonly ILoggerFactory _loggerFactory;
 
     public ScanCoordinator(
-        IServiceProvider services,
         IFileDiscoveryService discovery,
         ITagReaderAdapter reader,
         ITagWriterAdapter writer,
@@ -40,7 +38,6 @@ public sealed class ScanCoordinator
         ILogger<ScanCoordinator> logger,
         ILoggerFactory loggerFactory)
     {
-        ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(discovery);
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(writer);
@@ -51,7 +48,6 @@ public sealed class ScanCoordinator
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(loggerFactory);
 
-        _services = services;
         _discovery = discovery;
         _reader = reader;
         _writer = writer;
@@ -161,15 +157,26 @@ public sealed class ScanCoordinator
         options.Write.DryRun = true;
     }
 
+    /// <summary>
+    /// Locates a <c>tagger.yaml</c> for the picked folder. Priority: the folder itself first
+    /// (a per-collection config "lives next to the music"), then the parent folder (handy when
+    /// the user picks a sub-album from a library that has one central config). Returns null when
+    /// neither is present so the caller can fall back to in-memory defaults.
+    /// </summary>
+    /// <remarks>
+    /// Uses <see cref="DirectoryInfo.Parent"/> for the upward walk — handles mixed
+    /// <c>\</c>/<c>/</c> separators correctly on Windows where <see cref="Path.GetDirectoryName(string)"/>
+    /// + a single trailing-char trim can miss the parent.
+    /// </remarks>
     private static string? FindConfig(string sourceDirectory)
     {
         var inSource = Path.Combine(sourceDirectory, "tagger.yaml");
         if (File.Exists(inSource)) return inSource;
 
-        var parent = Path.GetDirectoryName(sourceDirectory.TrimEnd(Path.DirectorySeparatorChar));
-        if (!string.IsNullOrEmpty(parent))
+        var parent = new DirectoryInfo(sourceDirectory).Parent;
+        if (parent is not null)
         {
-            var inParent = Path.Combine(parent, "tagger.yaml");
+            var inParent = Path.Combine(parent.FullName, "tagger.yaml");
             if (File.Exists(inParent)) return inParent;
         }
         return null;

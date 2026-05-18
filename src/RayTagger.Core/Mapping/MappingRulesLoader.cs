@@ -85,12 +85,17 @@ public static class MappingRulesLoader
     /// <summary>
     /// When <c>taxonomy.enforce</c> is true, every literal in a <c>set:</c> block is checked
     /// against the corresponding allowlist. Empty strings (clear-the-field intent) pass through.
+    /// Honours <c>defaults.case_sensitive</c> so taxonomy validation matches the engine's runtime
+    /// comparison policy.
     /// </summary>
     private static void EnforceTaxonomy(MappingRuleSet ruleSet, Taxonomy taxonomy, List<ConfigurationError> errors)
     {
-        var genreSet = new HashSet<string>(taxonomy.Genres, StringComparer.OrdinalIgnoreCase);
-        var moodSet = new HashSet<string>(taxonomy.Moods, StringComparer.OrdinalIgnoreCase);
-        var setPositionSet = new HashSet<string>(taxonomy.SetPositions, StringComparer.OrdinalIgnoreCase);
+        var comparer = ruleSet.Defaults.CaseSensitive
+            ? StringComparer.Ordinal
+            : StringComparer.OrdinalIgnoreCase;
+        var genreSet = new HashSet<string>(taxonomy.Genres, comparer);
+        var moodSet = new HashSet<string>(taxonomy.Moods, comparer);
+        var setPositionSet = new HashSet<string>(taxonomy.SetPositions, comparer);
 
         for (var i = 0; i < ruleSet.Rules.Count; i++)
         {
@@ -104,7 +109,7 @@ public static class MappingRulesLoader
             if (!string.IsNullOrEmpty(rule.Set.Subgenre) && !string.IsNullOrEmpty(rule.Set.Genre))
             {
                 if (taxonomy.Subgenres.TryGetValue(rule.Set.Genre, out var allowed)
-                    && !allowed.Contains(rule.Set.Subgenre, StringComparer.OrdinalIgnoreCase))
+                    && !allowed.Contains(rule.Set.Subgenre, comparer))
                 {
                     errors.Add(new ConfigurationError($"{prefix}.subgenre",
                         $"Sub-genre '{rule.Set.Subgenre}' is not declared under genre '{rule.Set.Genre}'."));

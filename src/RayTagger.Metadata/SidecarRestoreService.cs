@@ -102,6 +102,8 @@ public sealed class SidecarRestoreService
             Bpm: t.Bpm,
             Key: key,
             Energy: t.Energy,
+            Mood: t.Mood,
+            SetPosition: t.SetPosition,
             Custom: t.Custom?.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase));
     }
 
@@ -129,6 +131,8 @@ public sealed class SidecarRestoreService
         public string? KeyStandard { get; set; }
         public string? KeyCamelot { get; set; }
         public int? Energy { get; set; }
+        public string? Mood { get; set; }
+        public string? SetPosition { get; set; }
         public Dictionary<string, string>? Custom { get; set; }
     }
 #pragma warning restore CA1812

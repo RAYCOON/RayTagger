@@ -33,14 +33,13 @@ public static class ServiceCollectionExtensions
             .CreateLogger();
         services.AddLogging(b => b.AddSerilog(logger, dispose: true));
 
-        // Shared pipeline + lookup HttpClient registrations.
+        // Shared pipeline + lookup HttpClient registrations — also brings PipelineFactory.
         services.AddRayTaggerHosting();
 
         // UI-specific: observable status reporter, scan coordinator, view-models.
         services.AddSingleton<UiToolStatusReporter>();
         services.AddSingleton<IToolStatusReporter>(sp => sp.GetRequiredService<UiToolStatusReporter>());
         services.AddSingleton<ScanCoordinator>();
-        services.AddSingleton<PipelineFactory>();
         services.AddTransient<MainWindowViewModel>();
         services.AddTransient<ScanViewModel>();
 
