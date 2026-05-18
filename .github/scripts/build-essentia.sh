@@ -103,8 +103,13 @@ case "$TARGET_RID" in
     # Force gcc/g++ explicitly: the windows-latest runner has MSVC installed; waf
     # would otherwise pick cl.exe — which can't find GCC-style <map> headers and
     # would produce a binary that couldn't link to /mingw64 libs anyway.
-    export CC=gcc
-    export CXX=g++
+    #
+    # The `.exe` suffix is required: waf's find_program walks PATH and runs
+    # `os.access(<path>/<name>, os.X_OK)`. Without the suffix, Python on Windows
+    # reports the file as not-executable (Windows treats only PATHEXT-listed
+    # extensions as executable). Bash's `which` papers over this; waf does not.
+    export CC=gcc.exe
+    export CXX=g++.exe
     export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     WAF_ARGS+=(--std=c++17)
 
