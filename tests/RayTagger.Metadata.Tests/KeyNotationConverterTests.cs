@@ -76,4 +76,34 @@ public class KeyNotationConverterTests
         result!.Standard.Should().Be("Am");
         result.Camelot.Should().Be("8A");
     }
+
+    // Real-world DJ libraries (Mixed In Key, Traktor, …) often write Camelot notation into TKEY /
+    // INITIALKEY even though the spec says those frames carry standard notation. The reader passes
+    // the TKEY value into the `standard` slot — we have to accept Camelot there too or every
+    // MIK-tagged file looks unkeyed in the diff view. This is the regression for the UI bug.
+    [Theory]
+    [InlineData("8A",  "Am",  "8A")]
+    [InlineData("3A",  "Bbm", "3A")]
+    [InlineData("11A", "F#m", "11A")]
+    [InlineData("8B",  "C",   "8B")]
+    public void Standard_slot_accepts_Camelot_notation(string camelotInStandardSlot, string expectedStd, string expectedCam)
+    {
+        var result = KeyNotationConverter.FromEither(camelotInStandardSlot, null);
+
+        result.Should().NotBeNull();
+        result!.Standard.Should().Be(expectedStd);
+        result.Camelot.Should().Be(expectedCam);
+    }
+
+    [Theory]
+    [InlineData("Am",  "Am",  "8A")]
+    [InlineData("Dm",  "Dm",  "7A")]
+    public void Camelot_slot_accepts_standard_notation(string standardInCamelotSlot, string expectedStd, string expectedCam)
+    {
+        var result = KeyNotationConverter.FromEither(null, standardInCamelotSlot);
+
+        result.Should().NotBeNull();
+        result!.Standard.Should().Be(expectedStd);
+        result.Camelot.Should().Be(expectedCam);
+    }
 }

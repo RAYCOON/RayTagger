@@ -73,27 +73,56 @@ public static class KeyNotationConverter
 
     /// <summary>
     /// Tries to build a fully-populated <see cref="MusicalKey"/> from whichever notation was read.
-    /// Returns null when neither input is recognised. When one input is valid and the other is
-    /// garbage, the valid one wins and its counterpart is derived from the map — we never
-    /// propagate an unrecognised notation through to the consumer.
+    /// Returns null when neither input is recognised.
     /// </summary>
+    /// <remarks>
+    /// **Real-world tolerance:** the ID3v2.4 spec says <c>TKEY</c> (and Vorbis <c>INITIALKEY</c>)
+    /// carry standard notation — but Mixed In Key and several other DJ tools ignore the spec and
+    /// write Camelot (<c>8A</c>) into those frames. We try both interpretations of each input so
+    /// neither convention silently drops the key. When one input is valid and the other is
+    /// garbage, the valid one wins and its counterpart is derived from the map.
+    /// </remarks>
     public static MusicalKey? FromEither(string? standard, string? camelot)
     {
-        var normalisedStd = NormaliseStandard(standard);
-        var normalisedCam = NormaliseCamelot(camelot);
+        var stdSlot = ClassifyValue(standard);
+        var camSlot = ClassifyValue(camelot);
 
-        string? derivedCam = null;
-        string? derivedStd = null;
-        var stdValid = normalisedStd is not null && StandardToCamelot.TryGetValue(normalisedStd, out derivedCam);
-        var camValid = normalisedCam is not null && CamelotToStandard.TryGetValue(normalisedCam, out derivedStd);
+        // Pull a recognised standard + Camelot pair from whichever inputs actually parse.
+        // Both inputs are tried as both notations so a Camelot-in-TKEY ("8A") still resolves.
+        var resolvedStd = stdSlot.Standard ?? camSlot.Standard;
+        var resolvedCam = camSlot.Camelot ?? stdSlot.Camelot;
 
-        return (stdValid, camValid) switch
+        if (resolvedStd is not null && resolvedCam is not null)
         {
-            (true, true) => new MusicalKey(normalisedStd!, normalisedCam!),
-            (true, false) => new MusicalKey(normalisedStd!, derivedCam!),
-            (false, true) => new MusicalKey(derivedStd!, normalisedCam!),
-            _ => null,
-        };
+            return new MusicalKey(resolvedStd, resolvedCam);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Classifies a raw key string by trying it as standard notation first, then Camelot. Returns
+    /// whichever direction(s) recognise it together with the derived counterpart.
+    /// </summary>
+    private static (string? Standard, string? Camelot) ClassifyValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return (null, null);
+        }
+
+        var asStd = NormaliseStandard(value);
+        if (asStd is not null && StandardToCamelot.TryGetValue(asStd, out var camFromStd))
+        {
+            return (asStd, camFromStd);
+        }
+
+        var asCam = NormaliseCamelot(value);
+        if (asCam is not null && CamelotToStandard.TryGetValue(asCam, out var stdFromCam))
+        {
+            return (stdFromCam, asCam);
+        }
+
+        return (null, null);
     }
 
     private static string? NormaliseStandard(string? value)
