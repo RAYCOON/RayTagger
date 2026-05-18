@@ -123,10 +123,11 @@ jobs:
               libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
               libsamplerate0-dev libtag1-dev libchromaprint-dev
 
-      - name: Build Essentia
-        # Windows uses MSYS2's bash so the build script sees a Unix-y environment
-        # (pacman-installed pkg-config, /mingw64/bin in PATH, cygpath available).
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
+      # Build is split into two steps because GitHub Actions disallows matrix/runner
+      # context in the `shell:` key — `if:` is the only place those contexts work,
+      # so we gate two near-identical steps instead of one parametrised step.
+      - name: Build Essentia (Unix)
+        if: ${{ !startsWith(matrix.runner, 'windows') }}
         env:
           ESSENTIA_REPO: ${{ github.workspace }}/essentia
           STAGE_DIR: ${{ runner.temp }}/stage
@@ -134,25 +135,52 @@ jobs:
           ESSENTIA_REF: ${{ inputs.essentia_ref || 'master' }}
         run: bash .github/scripts/build-essentia.sh
 
-      - name: Smoke-test the built binary
-        shell: ${{ runner.os == 'Windows' && 'msys2 {0}' || 'bash' }}
+      - name: Build Essentia (Windows / MSYS2)
+        if: startsWith(matrix.runner, 'windows')
+        shell: "msys2 {0}"
+        env:
+          ESSENTIA_REPO: ${{ github.workspace }}/essentia
+          STAGE_DIR: ${{ runner.temp }}/stage
+          TARGET_RID: ${{ matrix.rid }}
+          ESSENTIA_REF: ${{ inputs.essentia_ref || 'master' }}
+        run: bash .github/scripts/build-essentia.sh
+
+      - name: Smoke-test the built binary (Unix)
+        if: ${{ !startsWith(matrix.runner, 'windows') }}
         env:
           STAGE_DIR_RAW: ${{ runner.temp }}/stage
           TARGET_RID: ${{ matrix.rid }}
         run: |
           STAGE="$STAGE_DIR_RAW"
-          if [[ "$TARGET_RID" == win-* ]]; then
-            STAGE=$(cygpath -u "$STAGE")
-            BIN_NAME="essentia_streaming_extractor_music.exe"
-          else
-            BIN_NAME="essentia_streaming_extractor_music"
-          fi
+          BIN_NAME="essentia_streaming_extractor_music"
           ARCHIVE=$(ls "$STAGE"/essentia-*-"$TARGET_RID".tar.gz)
           TEST_DIR=$(mktemp -d)
           tar -C "$TEST_DIR" -xzf "$ARCHIVE"
           BIN_DIR=$(find "$TEST_DIR" -name "$BIN_NAME" -exec dirname {} \;)
           "$BIN_DIR/$BIN_NAME" 2>&1 | head -5
-          # exit 1 with usage banner is expected; > 2 means the binary crashed
+          set +e
+          "$BIN_DIR/$BIN_NAME"
+          rc=$?
+          set -e
+          if [ $rc -gt 2 ]; then
+            echo "Smoke test failed — binary returned $rc"
+            exit 1
+          fi
+
+      - name: Smoke-test the built binary (Windows / MSYS2)
+        if: startsWith(matrix.runner, 'windows')
+        shell: "msys2 {0}"
+        env:
+          STAGE_DIR_RAW: ${{ runner.temp }}/stage
+          TARGET_RID: ${{ matrix.rid }}
+        run: |
+          STAGE=$(cygpath -u "$STAGE_DIR_RAW")
+          BIN_NAME="essentia_streaming_extractor_music.exe"
+          ARCHIVE=$(ls "$STAGE"/essentia-*-"$TARGET_RID".tar.gz)
+          TEST_DIR=$(mktemp -d)
+          tar -C "$TEST_DIR" -xzf "$ARCHIVE"
+          BIN_DIR=$(find "$TEST_DIR" -name "$BIN_NAME" -exec dirname {} \;)
+          "$BIN_DIR/$BIN_NAME" 2>&1 | head -5
           set +e
           "$BIN_DIR/$BIN_NAME"
           rc=$?
