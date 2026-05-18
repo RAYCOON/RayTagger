@@ -54,18 +54,21 @@ public sealed class ScanOptions
 public enum ExistingTagsPolicy
 {
     /// <summary>
-    /// Default. Analysis/Lookup values are preserved when the existing tag is non-empty AND the
-    /// analysis value would replace it; Rules-sourced values always write. See ARCHITECTURE §6.2.
+    /// Default. Per field: if an existing value is set, Analysis/Lookup do NOT overwrite it.
+    /// Rules-sourced values always write regardless of policy (the user's explicit declarative
+    /// intent should never be silently dropped). See <see cref="FillOnlyEmpty"/> for the alias
+    /// and ARCHITECTURE.md §6.2 for the full matrix.
     /// </summary>
     SkipIfPresent,
 
     /// <summary>
-    /// Stricter than <see cref="SkipIfPresent"/>: Analysis and Lookup values are written ONLY when
-    /// the existing tag is empty. Rules-sourced values still always write.
+    /// Alias of <see cref="SkipIfPresent"/>. Kept as a separate enum value because the example
+    /// YAML and earlier docs reference both names; merger behaviour is identical. Pick whichever
+    /// reads better in the user's <c>tagger.yaml</c>.
     /// </summary>
     FillOnlyEmpty,
 
-    /// <summary>Overwrite anything that isn't empty.</summary>
+    /// <summary>Overwrite anything, including non-empty existing values.</summary>
     AlwaysOverwrite,
 }
 

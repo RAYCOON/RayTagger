@@ -84,16 +84,27 @@ public sealed class TagLibTagWriter : ITagWriter
     /// <summary>
     /// Returns the logical-field names that need writing — i.e. those whose <see cref="TagFieldSource"/>
     /// is anything other than <see cref="TagFieldSource.Existing"/>. The pipeline merge step has
-    /// already applied the policy at this point, so we trust the sources.
+    /// already applied the policy at this point, so we trust the sources. Custom-field names are
+    /// prefixed with <c>"tag."</c> to disambiguate from the named logical slots in the dispatch.
     /// </summary>
     private static List<string> ResolveFieldsToWrite(ResolvedTrackTags resolved)
     {
-        var list = new List<string>(8);
+        var list = new List<string>(8 + resolved.Custom.Count);
         if (resolved.Genre.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Genre));
         if (resolved.SubGenre.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.SubGenre));
         if (resolved.Bpm.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Bpm));
         if (resolved.Key.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Key));
         if (resolved.Energy.Source != TagFieldSource.Existing) list.Add(nameof(TrackTags.Energy));
+        // Custom fields touched by mapping rules (TagFieldSource.Rules) need to be written too —
+        // a `set: { tag.mood: "Driving" }` rule that ran in the engine but never produced a
+        // TXXX:MOOD frame would silently lose the user's declarative intent.
+        foreach (var (name, field) in resolved.Custom)
+        {
+            if (field.Source != TagFieldSource.Existing)
+            {
+                list.Add("tag." + name);
+            }
+        }
         return list;
     }
 
@@ -118,6 +129,16 @@ public sealed class TagLibTagWriter : ITagWriter
                     break;
                 case nameof(TrackTags.Energy):
                     FrameMapper.WriteEnergy(file, resolved.Energy.Value);
+                    break;
+                default:
+                    if (field.StartsWith("tag.", StringComparison.Ordinal))
+                    {
+                        var customName = field[4..];
+                        if (resolved.Custom.TryGetValue(customName, out var customField))
+                        {
+                            FrameMapper.WriteCustomField(file, customName, customField.Value);
+                        }
+                    }
                     break;
             }
         }

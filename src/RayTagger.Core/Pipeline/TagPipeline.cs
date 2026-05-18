@@ -67,10 +67,9 @@ public sealed class TagPipeline : ITagPipeline
             Title = existing.Title,
             Album = existing.Album,
             Fingerprint = analysis.Fingerprint.Chromaprint,
-            // Duration isn't tracked on TrackTags yet — AcoustID skips when null, other providers
-            // don't need it. Surfacing duration is a small TagLib# addition; deferred until the
-            // user has Essentia + fpcalc installed and we can validate AcoustID end-to-end.
-            DurationSeconds = null,
+            // Duration comes from TagLib# Properties.Duration (read by TagLibTagReader). AcoustID
+            // requires it; the other providers ignore the field when null.
+            DurationSeconds = existing.DurationSeconds,
         };
 
     public async IAsyncEnumerable<PipelineOutcome> RunAsync(
@@ -208,7 +207,11 @@ public sealed class TagPipeline : ITagPipeline
         || resolved.SubGenre.Source != TagFieldSource.Existing
         || resolved.Bpm.Source != TagFieldSource.Existing
         || resolved.Key.Source != TagFieldSource.Existing
-        || resolved.Energy.Source != TagFieldSource.Existing;
+        || resolved.Energy.Source != TagFieldSource.Existing
+        // Custom fields set by mapping rules count too — without this, a rule that ONLY changes
+        // a custom tag (no logical slot touched) gets bucketed as Unchanged and the writer is
+        // skipped, silently dropping the user's declarative intent on the floor.
+        || resolved.Custom.Any(kv => kv.Value.Source != TagFieldSource.Existing);
 
     /// <summary>
     /// Per-file failure isolation: catch everything except cancellation/OOM/StackOverflow.

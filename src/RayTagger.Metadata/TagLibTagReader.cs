@@ -74,6 +74,14 @@ public sealed class TagLibTagReader : ITagReader
 
         var musicalKey = KeyNotationConverter.FromEither(common.InitialKey, camelot);
 
+        // TagLib# exposes container-decoded duration on Properties (null if the file is corrupt
+        // or the codec wasn't recognised). AcoustID's lookup endpoint refuses to answer without
+        // it, so wiring duration through closes the AcoustID → MusicBrainz handshake.
+        var duration = tagFile.Properties?.Duration ?? TimeSpan.Zero;
+        var durationSeconds = duration > TimeSpan.Zero
+            ? (int)Math.Round(duration.TotalSeconds, MidpointRounding.AwayFromZero)
+            : (int?)null;
+
         return new TrackTags(
             Title: NullIfEmpty(common.Title),
             Artist: NullIfEmpty(common.FirstPerformer),
@@ -85,6 +93,7 @@ public sealed class TagLibTagReader : ITagReader
             Bpm: common.BeatsPerMinute > 0 ? common.BeatsPerMinute : null,
             Key: musicalKey,
             Energy: ParseEnergy(energyText),
+            DurationSeconds: durationSeconds,
             Custom: ExtractUnknownFrames(id3, xiph));
     }
 

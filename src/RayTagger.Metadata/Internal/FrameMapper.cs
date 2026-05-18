@@ -46,6 +46,17 @@ internal static class FrameMapper
     }
 
     /// <summary>
+    /// Writes a custom user-defined frame (anything from mapping rule <c>set: { tag.NAME: value }</c>
+    /// or read from existing TXXX/Vorbis fields outside the logical field set). Description is the
+    /// frame name as written; null/empty value removes the frame.
+    /// </summary>
+    public static void WriteCustomField(TagLib.File file, string fieldName, string? value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fieldName);
+        WriteUserDefined(file, fieldName, value);
+    }
+
+    /// <summary>
     /// Writes a value to ID3v2 <c>TXXX</c> (MP3/AIFF) or Vorbis comment (FLAC), depending on which
     /// tag container the file uses. Both branches are idempotent on <c>null</c>/empty input.
     /// </summary>

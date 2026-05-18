@@ -17,6 +17,7 @@ public sealed record TrackTags(
     double? Bpm = null,
     MusicalKey? Key = null,
     int? Energy = null,
+    int? DurationSeconds = null,
     IReadOnlyDictionary<string, string>? Custom = null)
 {
     public IReadOnlyDictionary<string, string> Custom { get; init; } =
