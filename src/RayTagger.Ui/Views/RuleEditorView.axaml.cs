@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using AvaloniaEdit.Document;
 using AvaloniaEdit.TextMate;
 using RayTagger.Ui.ViewModels;
 using TextMateSharp.Grammars;
@@ -10,8 +11,10 @@ namespace RayTagger.Ui.Views;
 /// <summary>
 /// Code-behind for <c>RuleEditorView.axaml</c>. Two responsibilities the markup can't handle:
 /// <list type="bullet">
-///   <item>Sync the AvaloniaEdit <c>TextEditor.Text</c> with <see cref="RuleEditorViewModel.YamlText"/>.
-///         AvaloniaEdit's <c>Text</c> is a CLR property, not a styled one, so it doesn't bind.</item>
+///   <item>Sync the AvaloniaEdit <c>TextEditor</c> with <see cref="RuleEditorViewModel.YamlText"/>.
+///         AvaloniaEdit's <c>Text</c> property is a CLR property, not styled — bindings don't
+///         work, and the convenience setter has historic flakiness before the editor is
+///         measured, so we update <c>Editor.Document</c> directly.</item>
 ///   <item>Install the TextMate YAML grammar on first load — gives us syntax highlighting that
 ///         tracks the current theme.</item>
 /// </list>
@@ -27,13 +30,30 @@ public partial class RuleEditorView : UserControl
     {
         InitializeComponent();
 
-        var registry = new RegistryOptions(ThemeName.Dark);
-        _textMate = Editor.InstallTextMate(registry);
-        _textMate.SetGrammar(registry.GetScopeByLanguageId(registry.GetLanguageByExtension(".yaml").Id));
+        // Install TextMate defensively — if YAML grammar isn't bundled in this TextMateSharp
+        // build the constructor would NRE and the whole view would refuse to render. Highlighting
+        // is a nice-to-have; falling back to plain text is acceptable.
+        try
+        {
+            var registry = new RegistryOptions(ThemeName.Dark);
+            _textMate = Editor.InstallTextMate(registry);
+            var lang = registry.GetLanguageByExtension(".yaml");
+            if (lang is not null)
+            {
+                _textMate.SetGrammar(registry.GetScopeByLanguageId(lang.Id));
+            }
+        }
+        catch (Exception)
+        {
+            // Highlighter unavailable — editor still works as a plain text view.
+        }
 
         Editor.TextChanged += OnEditorTextChanged;
         DataContextChanged += OnDataContextChanged;
-        AttachedToVisualTree += OnAttachedToVisualTree;
+
+        // Pull the initial DataContext synchronously in case the binding already evaluated before
+        // we subscribed (happens when this view is inside an eagerly-instantiated TabItem).
+        OnDataContextChanged(this, EventArgs.Empty);
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -50,16 +70,6 @@ public partial class RuleEditorView : UserControl
         SyncEditorFromVm(_boundVm.YamlText);
     }
 
-    /// <summary>
-    /// First-time tab activation triggers auto-load from the last scan's mappings file. Cheap
-    /// no-op if no scan has run yet or a file is already loaded — see the VM's implementation.
-    /// </summary>
-    private async void OnAttachedToVisualTree(object? sender, Avalonia.VisualTreeAttachmentEventArgs e)
-    {
-        if (_boundVm is null || !string.IsNullOrEmpty(_boundVm.FilePath)) return;
-        await _boundVm.TryAutoLoadFromLastScanAsync();
-    }
-
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (_boundVm is null || e.PropertyName != nameof(RuleEditorViewModel.YamlText)) return;
@@ -69,12 +79,23 @@ public partial class RuleEditorView : UserControl
     private void SyncEditorFromVm(string yamlText)
     {
         if (_suppressVmChange) return;
-        if (Editor.Document is { } doc && doc.Text == yamlText) return;
+        if (Editor.Document is { } current && current.Text == yamlText) return;
 
         _suppressEditorChange = true;
         try
         {
-            Editor.Text = yamlText;
+            // Setting Document.Text is the reliable update path — the public Text setter has
+            // a known history of silently failing before the editor is measured (e.g. the
+            // first attach inside a TabItem that hasn't been activated yet). Document is
+            // auto-created by the TextEditor constructor so the null branch is defensive.
+            if (Editor.Document is null)
+            {
+                Editor.Document = new TextDocument(yamlText);
+            }
+            else
+            {
+                Editor.Document.Text = yamlText;
+            }
         }
         finally
         {

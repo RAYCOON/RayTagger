@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using RayTagger.Ui.ViewModels;
+using System.Linq;
 
 namespace RayTagger.Ui.Views;
 
@@ -48,5 +49,23 @@ public partial class MainWindow : Window
         {
             await vm.Scan.ApplyAllChangedCommand.ExecuteAsync(parameter: null);
         }
+    }
+
+    /// <summary>
+    /// Switching to the Regeln tab triggers a one-time auto-load of the mappings file the last
+    /// scan picked up. Lives here (not in the view's AttachedToVisualTree) because TabControl
+    /// instantiates its tab content eagerly — Attach fires before any scan has had a chance to
+    /// run, so we'd miss the trigger every time. SelectionChanged on the other hand fires every
+    /// switch, and the VM's TryAutoLoad is idempotent when a file is already loaded.
+    /// </summary>
+    private async void OnTabSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not TabControl tabControl) return;
+        if (tabControl.SelectedItem is not TabItem selected) return;
+        if (selected.Header?.ToString() != "Regeln") return;
+        if (DataContext is not MainWindowViewModel vm) return;
+        if (!string.IsNullOrEmpty(vm.RuleEditor.FilePath)) return;
+
+        await vm.RuleEditor.TryAutoLoadFromLastScanAsync();
     }
 }

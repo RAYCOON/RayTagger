@@ -6,5 +6,9 @@
     <Application.Styles>
         <FluentTheme />
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
+        <!-- Without this, AvaloniaEdit's TextEditor has no default style and renders as a
+             completely invisible / unstyled control. Adds the line-number gutter, caret,
+             selection highlight, scroll bars, and the Fluent-matched colour palette. -->
+        <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml"/>
     </Application.Styles>
 </Application>
