@@ -35,6 +35,12 @@ public sealed class ScanCoordinator
     private TaggerOptions? _lastOptions;
     private readonly SemaphoreSlim _applyGate = new(1, 1);
 
+    /// <summary>Absolute path of the <c>mappings.yaml</c> in use by the last scan, or null if no scan has run.</summary>
+    public string? LastMappingsFile => _lastOptions?.Mapping.RulesFile;
+
+    /// <summary>Loaded taxonomy from the last scan — used by the Rule Editor for live validation. Defaults to empty.</summary>
+    public Taxonomy LastTaxonomy => _lastOptions?.Taxonomy.Loaded ?? Taxonomy.Empty;
+
     public ScanCoordinator(
         IFileDiscoveryService discovery,
         ITagReaderAdapter reader,

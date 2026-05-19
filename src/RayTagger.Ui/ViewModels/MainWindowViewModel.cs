@@ -17,14 +17,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly ILogger<MainWindowViewModel> _logger;
 
     public ScanViewModel Scan { get; }
+    public RuleEditorViewModel RuleEditor { get; }
     public UiToolStatusReporter ToolStatus { get; }
 
-    public MainWindowViewModel(ScanViewModel scan, UiToolStatusReporter toolStatus, ILogger<MainWindowViewModel> logger)
+    public MainWindowViewModel(
+        ScanViewModel scan,
+        RuleEditorViewModel ruleEditor,
+        UiToolStatusReporter toolStatus,
+        ILogger<MainWindowViewModel> logger)
     {
         ArgumentNullException.ThrowIfNull(scan);
+        ArgumentNullException.ThrowIfNull(ruleEditor);
         ArgumentNullException.ThrowIfNull(toolStatus);
         ArgumentNullException.ThrowIfNull(logger);
         Scan = scan;
+        RuleEditor = ruleEditor;
         ToolStatus = toolStatus;
         _logger = logger;
     }

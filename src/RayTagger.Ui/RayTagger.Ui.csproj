@@ -39,6 +39,8 @@
     <PackageReference Include="Avalonia.ReactiveUI" />
     <PackageReference Include="Avalonia.Diagnostics" Condition="'$(Configuration)' == 'Debug'" />
     <PackageReference Include="Avalonia.Controls.DataGrid" />
+    <!-- YAML editor with TextMate-based syntax highlighting for the Rule Editor view. -->
+    <PackageReference Include="AvaloniaEdit.TextMate" />
     <!-- Pinned to suppress the transitive Tmds.DBus.Protocol 0.20.0 CVE pulled in by
          Avalonia.Desktop's Linux backend. -->
     <PackageReference Include="Tmds.DBus.Protocol" />

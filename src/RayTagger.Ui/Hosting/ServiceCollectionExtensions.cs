@@ -42,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ScanCoordinator>();
         services.AddTransient<MainWindowViewModel>();
         services.AddTransient<ScanViewModel>();
+        services.AddTransient<RuleEditorViewModel>();
 
         return services;
     }
