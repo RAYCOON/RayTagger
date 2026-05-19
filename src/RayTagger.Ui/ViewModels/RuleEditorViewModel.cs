@@ -52,6 +52,14 @@ public sealed partial class RuleEditorViewModel : ObservableObject
     public bool IsDirty => _lastSavedYaml is not null && !string.Equals(YamlText, _lastSavedYaml, StringComparison.Ordinal);
     public bool IsValid => Errors.Count == 0;
 
+    /// <summary>
+    /// Fires whenever the editor buffer parses to a valid <see cref="MappingRuleSet"/>. The
+    /// <see cref="MainWindowViewModel"/> subscribes and forwards the new ruleset to
+    /// <see cref="ScanViewModel.UpdatePreview"/> so the results grid re-evaluates against every
+    /// already-scanned outcome — no re-read / re-analyze needed.
+    /// </summary>
+    public event EventHandler<RulePreviewEventArgs>? PreviewRequested;
+
     public RuleEditorViewModel(ScanCoordinator coordinator, ILogger<RuleEditorViewModel> logger)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -185,8 +193,10 @@ public sealed partial class RuleEditorViewModel : ObservableObject
         {
             // Use the coordinator's last-loaded taxonomy so `enforce: true` validation matches
             // what a scan would see. Falls back to no-taxonomy if we haven't scanned yet.
-            MappingRulesLoader.LoadFromString(YamlText, "(editor buffer)", _coordinator.LastTaxonomy);
+            var ruleSet = MappingRulesLoader.LoadFromString(YamlText, "(editor buffer)", _coordinator.LastTaxonomy);
             StatusMessage = "Regeln gültig.";
+            // Live-Preview: hand the parsed ruleset off so the results grid can re-evaluate.
+            PreviewRequested?.Invoke(this, new RulePreviewEventArgs(ruleSet));
         }
         catch (ConfigurationException ex)
         {
@@ -213,3 +223,11 @@ public sealed partial class RuleEditorViewModel : ObservableObject
 /// inside <c>mappings.yaml</c> (e.g. <c>rules[2].set.mood</c>); <see cref="Message"/> is the
 /// human-readable explanation.</summary>
 public sealed record RuleValidationError(string YamlPath, string Message);
+
+/// <summary>EventArgs payload for <see cref="RuleEditorViewModel.PreviewRequested"/> — wraps the
+/// parsed <see cref="MappingRuleSet"/>. Exists because CA1003 wants event-handler T-params to
+/// derive from <see cref="EventArgs"/>.</summary>
+public sealed class RulePreviewEventArgs(MappingRuleSet ruleSet) : EventArgs
+{
+    public MappingRuleSet RuleSet { get; } = ruleSet ?? throw new ArgumentNullException(nameof(ruleSet));
+}

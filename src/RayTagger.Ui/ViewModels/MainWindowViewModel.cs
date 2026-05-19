@@ -34,6 +34,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         RuleEditor = ruleEditor;
         ToolStatus = toolStatus;
         _logger = logger;
+
+        // Live-Preview bridge: when the user types a valid rule edit, the editor parses it and
+        // hands the new ruleset off to the scan view-model, which re-evaluates each cached
+        // outcome and pushes the refreshed proposed values back to the results grid.
+        RuleEditor.PreviewRequested += (_, args) => Scan.UpdatePreview(args.RuleSet);
     }
 
     /// <summary>

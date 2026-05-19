@@ -19,19 +19,51 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     public string FileName { get; }
 
     /// <summary>The underlying pipeline outcome — used as the input to a deferred write.</summary>
-    public PipelineOutcome SourceOutcome { get; }
+    public PipelineOutcome SourceOutcome { get; private set; }
 
-    public TagFieldSource GenreSource { get; }
-    public string? ProposedGenre { get; }
-    public string? ProposedSubGenre { get; }
-    public double? ProposedBpm { get; }
-    public string? ProposedKey { get; }
-    public int? ProposedEnergy { get; }
-    public string? ProposedMood { get; }
-    public string? ProposedSetPosition { get; }
-    public string? DestinationPath { get; }
-    public IReadOnlyList<string> AppliedRules { get; }
+    /// <summary>The pre-map resolved tags from the scan, kept so live-preview can re-evaluate
+    /// the rule engine against a newly-edited mappings.yaml without re-reading the file.</summary>
+    public ResolvedTrackTags? PreMapResolved => SourceOutcome.PreMapResolved;
+
+    /// <summary>The existing tags at scan time — feeds rule predicates that look at artist / path.</summary>
+    public TrackTags? ExistingAtScan => SourceOutcome.ExistingAtScan;
+
+    [ObservableProperty] private TagFieldSource _genreSource;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasGenreDiff))]
+    private string? _proposedGenre;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSubGenreDiff))]
+    private string? _proposedSubGenre;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasBpmDiff))]
+    private double? _proposedBpm;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasKeyDiff))]
+    private string? _proposedKey;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasEnergyDiff))]
+    private int? _proposedEnergy;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasMoodDiff))]
+    private string? _proposedMood;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSetPositionDiff))]
+    private string? _proposedSetPosition;
+    [ObservableProperty] private IReadOnlyList<string> _appliedRules = [];
+    [ObservableProperty] private string? _destinationPath;
     public IReadOnlyList<string> Errors { get; }
+
+    // Per-field diff flags drive the gelbes Cell-Highlight in the results grid. True iff the
+    // proposed value differs from the existing one (and we actually have a proposed value to
+    // highlight — null proposed → no highlight, otherwise every Unverändert row would glow).
+    public bool HasGenreDiff => ProposedGenre is not null && !string.Equals(ExistingGenre, ProposedGenre, StringComparison.Ordinal);
+    public bool HasSubGenreDiff => ProposedSubGenre is not null && !string.Equals(ExistingSubGenre, ProposedSubGenre, StringComparison.Ordinal);
+    public bool HasBpmDiff => ProposedBpm is not null && ProposedBpm != ExistingBpm;
+    public bool HasKeyDiff => ProposedKey is not null && !string.Equals(ExistingKey, ProposedKey, StringComparison.Ordinal);
+    public bool HasEnergyDiff => ProposedEnergy is not null && ProposedEnergy != ExistingEnergy;
+    public bool HasMoodDiff => ProposedMood is not null && !string.Equals(ExistingMood, ProposedMood, StringComparison.Ordinal);
+    public bool HasSetPositionDiff => ProposedSetPosition is not null && !string.Equals(ExistingSetPosition, ProposedSetPosition, StringComparison.Ordinal);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanApply))]
@@ -58,13 +90,27 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
 
     [ObservableProperty] private string? _applyError;
 
-    [ObservableProperty] private string? _existingGenre;
-    [ObservableProperty] private string? _existingSubGenre;
-    [ObservableProperty] private double? _existingBpm;
-    [ObservableProperty] private string? _existingKey;
-    [ObservableProperty] private int? _existingEnergy;
-    [ObservableProperty] private string? _existingMood;
-    [ObservableProperty] private string? _existingSetPosition;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasGenreDiff))]
+    private string? _existingGenre;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSubGenreDiff))]
+    private string? _existingSubGenre;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasBpmDiff))]
+    private double? _existingBpm;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasKeyDiff))]
+    private string? _existingKey;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasEnergyDiff))]
+    private int? _existingEnergy;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasMoodDiff))]
+    private string? _existingMood;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSetPositionDiff))]
+    private string? _existingSetPosition;
 
     /// <summary>True iff this row has a pending change the user can apply.</summary>
     public bool CanApply => !IsApplying && !IsReverting && StatusLabel == "Würde ändern";
@@ -94,30 +140,53 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         };
 
         ExistingGenre = existing.Genre;
+        ExistingSubGenre = existing.SubGenre;
+        ExistingBpm = existing.Bpm;
+        ExistingKey = existing.Key?.Standard;
+        ExistingEnergy = existing.Energy;
+        ExistingMood = existing.Mood;
+        ExistingSetPosition = existing.SetPosition;
+
+        ApplyResolvedFromOutcome(outcome);
+        Errors = [.. outcome.Errors.Select(e => $"[{e.Stage}] {e.Message}")];
+    }
+
+    private void ApplyResolvedFromOutcome(PipelineOutcome outcome)
+    {
         ProposedGenre = outcome.Resolved.Genre.Value;
         GenreSource = outcome.Resolved.Genre.Source;
-
-        ExistingSubGenre = existing.SubGenre;
         ProposedSubGenre = outcome.Resolved.SubGenre.Value;
-
-        ExistingBpm = existing.Bpm;
         ProposedBpm = outcome.Resolved.Bpm.Value;
-
-        ExistingKey = existing.Key?.Standard;
         ProposedKey = outcome.Resolved.Key.Value?.Standard;
-
-        ExistingEnergy = existing.Energy;
         ProposedEnergy = outcome.Resolved.Energy.Value;
-
-        ExistingMood = existing.Mood;
         ProposedMood = outcome.Resolved.Mood.Value;
-
-        ExistingSetPosition = existing.SetPosition;
         ProposedSetPosition = outcome.Resolved.SetPosition.Value;
-
         DestinationPath = outcome.DestinationPath;
         AppliedRules = [.. outcome.AppliedRules.Select(r => r.RuleName)];
-        Errors = [.. outcome.Errors.Select(e => $"[{e.Stage}] {e.Message}")];
+    }
+
+    /// <summary>
+    /// Replaces the cached <see cref="SourceOutcome"/> with the result of re-evaluating the rule
+    /// engine on top of the existing pre-map state. Used by Live-Preview so a rule edit shows up
+    /// in the grid immediately without re-scanning the file. Recomputes <see cref="StatusLabel"/>
+    /// off the new resolved tags so "Würde ändern" / "Unverändert" stay accurate.
+    /// </summary>
+    public void UpdatePreview(PipelineOutcome refreshedOutcome, TrackTags existing)
+    {
+        ArgumentNullException.ThrowIfNull(refreshedOutcome);
+        ArgumentNullException.ThrowIfNull(existing);
+
+        SourceOutcome = refreshedOutcome;
+        ApplyResolvedFromOutcome(refreshedOutcome);
+
+        // Keep the row's StatusLabel honest after the preview swap: a previously "Würde ändern"
+        // row might collapse to "Unverändert" if the user's new rule chain produces no diff.
+        if (Status is PipelineStatus.Written or PipelineStatus.Failed)
+        {
+            // Don't overwrite terminal labels — the user has already applied / failed this row.
+            return;
+        }
+        StatusLabel = HasProposedChanges(refreshedOutcome, existing) ? "Würde ändern" : "Unverändert";
     }
 
     /// <summary>Mark the row "in progress" — disables its button + raises CanApply.</summary>

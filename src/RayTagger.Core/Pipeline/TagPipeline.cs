@@ -226,6 +226,9 @@ public sealed class TagPipeline : ITagPipeline
         }
 
         var resolved = TagMerger.Merge(existing, analysis, lookup, options.Analysis, options.Read.ExistingTagsPolicy);
+        // Snapshot the pre-map state so the UI's live-preview can re-evaluate the rule chain
+        // against a freshly-edited mappings.yaml without paying for a re-read / re-analyze.
+        var preMapResolved = resolved;
 
         IReadOnlyList<MappingRuleHit> appliedRules = [];
         try
@@ -286,7 +289,9 @@ public sealed class TagPipeline : ITagPipeline
             appliedRules,
             DestinationPath: destinationPath,
             Status: status,
-            Errors: errors);
+            Errors: errors,
+            PreMapResolved: preMapResolved,
+            ExistingAtScan: existing);
     }
 
     private static bool HasAnyNonExistingField(ResolvedTrackTags resolved) =>

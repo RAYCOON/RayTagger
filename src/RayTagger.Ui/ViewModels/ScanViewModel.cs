@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using RayTagger.Core.Mapping;
 using RayTagger.Core.Models;
 using RayTagger.Core.Pipeline;
 using RayTagger.Metadata;
@@ -19,6 +20,7 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
 {
     private readonly ScanCoordinator _coordinator;
     private readonly ITagReader _reader;
+    private readonly IMappingRuleEngine _ruleEngine;
     private readonly ILogger<ScanViewModel> _logger;
     private CancellationTokenSource? _cts;
     private bool _disposed;
@@ -56,14 +58,58 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<TrackOutcomeViewModel> Outcomes { get; } = [];
 
-    public ScanViewModel(ScanCoordinator coordinator, ITagReader reader, ILogger<ScanViewModel> logger)
+    public ScanViewModel(ScanCoordinator coordinator, ITagReader reader, IMappingRuleEngine ruleEngine, ILogger<ScanViewModel> logger)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(reader);
+        ArgumentNullException.ThrowIfNull(ruleEngine);
         ArgumentNullException.ThrowIfNull(logger);
         _coordinator = coordinator;
         _reader = reader;
+        _ruleEngine = ruleEngine;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Live-Preview entry point. Re-evaluates every already-scanned outcome against
+    /// <paramref name="newRules"/> and pushes the refreshed proposed-* values back to each row's
+    /// view-model. No file IO, no re-analysis, no re-lookup — purely the rule engine.
+    /// </summary>
+    public void UpdatePreview(MappingRuleSet newRules)
+    {
+        ArgumentNullException.ThrowIfNull(newRules);
+        if (Outcomes.Count == 0) return;
+
+        var taxonomy = _coordinator.LastTaxonomy;
+        foreach (var row in Outcomes)
+        {
+            // Rows where the pre-map snapshot is missing (read failure during the original scan)
+            // can't be re-evaluated — skip rather than throwing inside the loop.
+            if (row.PreMapResolved is null || row.ExistingAtScan is null) continue;
+
+            try
+            {
+                var result = _ruleEngine.Evaluate(
+                    row.PreMapResolved,
+                    row.ExistingAtScan,
+                    row.SourceOutcome.File,
+                    newRules,
+                    taxonomy);
+
+                var refreshed = row.SourceOutcome with
+                {
+                    Resolved = result.Tags,
+                    AppliedRules = result.Applied,
+                };
+                row.UpdatePreview(refreshed, row.ExistingAtScan);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Live-Preview rule eval failed for {Path}", row.Path);
+            }
+        }
+
+        StatusMessage = $"Vorschau aktualisiert ({Outcomes.Count} Zeilen).";
     }
 
     [RelayCommand]

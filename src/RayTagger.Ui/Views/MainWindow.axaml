@@ -85,20 +85,87 @@
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Datei" Width="220" Binding="{Binding FileName}"/>
                         <DataGridTextColumn Header="Status" Width="110" Binding="{Binding StatusLabel}"/>
-                        <DataGridTextColumn Header="Genre (aktuell → neu)" Width="220">
-                            <DataGridTextColumn.Binding>
-                                <MultiBinding StringFormat="{}{0} → {1}">
-                                    <Binding Path="ExistingGenre" FallbackValue=""/>
-                                    <Binding Path="ProposedGenre" FallbackValue=""/>
-                                </MultiBinding>
-                            </DataGridTextColumn.Binding>
-                        </DataGridTextColumn>
-                        <DataGridTextColumn Header="Sub-Genre" Width="140" Binding="{Binding ProposedSubGenre, FallbackValue=''}"/>
-                        <DataGridTextColumn Header="BPM" Width="70" Binding="{Binding ProposedBpm}"/>
-                        <DataGridTextColumn Header="Key" Width="60" Binding="{Binding ProposedKey}"/>
-                        <DataGridTextColumn Header="Energy" Width="65" Binding="{Binding ProposedEnergy}"/>
-                        <DataGridTextColumn Header="Mood" Width="100" Binding="{Binding ProposedMood, FallbackValue=''}"/>
-                        <DataGridTextColumn Header="Set" Width="100" Binding="{Binding ProposedSetPosition, FallbackValue=''}"/>
+                        <!-- Diff-aware columns: Border background lights up yellow when the row's
+                             Existing-* and Proposed-* differ, so a Live-Preview edit visually
+                             pops the cells it actually changed. The HasXxxDiff flags are recomputed
+                             via [NotifyPropertyChangedFor] on every Existing-/Proposed- mutation. -->
+                        <DataGridTemplateColumn Header="Genre (aktuell → neu)" Width="220">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                            Background="{Binding HasGenreDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
+                                        <TextBlock VerticalAlignment="Center">
+                                            <TextBlock.Text>
+                                                <MultiBinding StringFormat="{}{0} → {1}">
+                                                    <Binding Path="ExistingGenre" FallbackValue=""/>
+                                                    <Binding Path="ProposedGenre" FallbackValue=""/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Sub-Genre" Width="140">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                            Background="{Binding HasSubGenreDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
+                                        <TextBlock Text="{Binding ProposedSubGenre, FallbackValue=''}" VerticalAlignment="Center"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="BPM" Width="70">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                            Background="{Binding HasBpmDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
+                                        <TextBlock Text="{Binding ProposedBpm}" VerticalAlignment="Center"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Key" Width="60">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                            Background="{Binding HasKeyDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
+                                        <TextBlock Text="{Binding ProposedKey}" VerticalAlignment="Center"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Energy" Width="65">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                            Background="{Binding HasEnergyDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
+                                        <TextBlock Text="{Binding ProposedEnergy}" VerticalAlignment="Center"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Mood" Width="100">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                            Background="{Binding HasMoodDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
+                                        <TextBlock Text="{Binding ProposedMood, FallbackValue=''}" VerticalAlignment="Center"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Set" Width="100">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                            Background="{Binding HasSetPositionDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
+                                        <TextBlock Text="{Binding ProposedSetPosition, FallbackValue=''}" VerticalAlignment="Center"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTextColumn Header="Regeln" Width="*" Binding="{Binding AppliedRules, Converter={x:Static vm:JoinConverter.Instance}}"/>
                         <!-- Per-row Aktion: Apply + Revert side by side. -->
                         <DataGridTemplateColumn Header="Aktion" Width="200">
