@@ -69,7 +69,18 @@ public sealed class ScanOptions
     public List<string> Formats { get; set; } = ["mp3", "flac", "aiff"];
     public List<string> IncludeGlobs { get; set; } = [];
     public List<string> ExcludeGlobs { get; set; } = [];
-    public int Parallelism { get; set; } = Environment.ProcessorCount;
+
+    /// <summary>
+    /// Number of pipeline workers to run in parallel. <c>0</c> (the default) is the
+    /// "auto"-sentinel: <see cref="EffectiveParallelism"/> resolves it to
+    /// <see cref="Environment.ProcessorCount"/> at runtime. <c>1</c> picks the simple sequential
+    /// code path (deterministic ordering, useful for debugging). Any positive integer is honoured
+    /// as-is.
+    /// </summary>
+    public int Parallelism { get; set; }
+
+    /// <summary>Resolves <see cref="Parallelism"/> to a concrete worker count at runtime.</summary>
+    public int EffectiveParallelism => Parallelism > 0 ? Parallelism : Environment.ProcessorCount;
 }
 
 public enum ExistingTagsPolicy

@@ -124,7 +124,7 @@ public sealed class ScanCoordinator
             _statusReporter.ReportNote("No tagger.yaml found next to the source folder — running with defaults.");
             var options = new TaggerOptions
             {
-                Scan = new ScanOptions { Source = sourceDirectory, Recursive = true, Parallelism = 4 },
+                Scan = new ScanOptions { Source = sourceDirectory, Recursive = true },
                 Write = new WriteOptions { DryRun = true, Backup = false },
             };
             return (options, new MappingRuleSet());
@@ -141,7 +141,7 @@ public sealed class ScanCoordinator
             _statusReporter.ReportNote($"tagger.yaml at {configPath} is invalid — running with defaults. ({ex.Message})");
             loaded = new TaggerOptions
             {
-                Scan = new ScanOptions { Source = sourceDirectory, Recursive = true, Parallelism = 4 },
+                Scan = new ScanOptions { Source = sourceDirectory, Recursive = true },
             };
             rules = new MappingRuleSet();
             ForceUiDryRun(loaded);

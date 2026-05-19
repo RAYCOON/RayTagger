@@ -24,7 +24,7 @@ scan:
   exclude_globs:
     - "**/.DS_Store"
     - "**/iTunes/**"
-  parallelism: 4                    # concurrent files in analyze/lookup stages
+  parallelism: 0                    # concurrent workers; 0 = auto (Environment.ProcessorCount), 1 = sequential
 
 # --- 2. Reading existing tags ------------------------------------------------
 read:

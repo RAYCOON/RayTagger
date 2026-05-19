@@ -81,7 +81,7 @@ public sealed class TagPipeline : ITagPipeline
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(rules);
 
-        var parallelism = Math.Max(1, options.Scan.Parallelism);
+        var parallelism = Math.Max(1, options.Scan.EffectiveParallelism);
 
         // Parallelism = 1 keeps the simple sequential code-path for users who want deterministic
         // ordering or who debug with breakpoints. Above 1 we kick the channel-based fan-out so

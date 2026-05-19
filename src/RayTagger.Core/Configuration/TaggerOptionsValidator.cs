@@ -42,11 +42,11 @@ internal static class TaggerOptionsValidator
             errors.Add(new ConfigurationError("scan.source", "Source directory is required."));
         }
 
-        if (scan.Parallelism < 1)
+        if (scan.Parallelism < 0)
         {
             errors.Add(new ConfigurationError(
                 "scan.parallelism",
-                $"Must be >= 1 (got {scan.Parallelism})."));
+                $"Must be >= 0 (got {scan.Parallelism}). 0 = auto (Environment.ProcessorCount)."));
         }
 
         if (scan.Formats.Count == 0)
