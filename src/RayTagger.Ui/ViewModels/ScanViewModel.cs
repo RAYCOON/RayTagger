@@ -187,10 +187,17 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         try
         {
             var result = await _coordinator.RevertAsync(row.Path).ConfigureAwait(true);
-            if (result.Success)
+            if (result.Success && result.RestoredSnapshot is not null)
             {
-                row.EndRevertSuccess();
+                row.EndRevertSuccess(result.RestoredSnapshot);
                 StatusMessage = $"Wiederhergestellt: {row.FileName} ({result.WrittenFields.Count} Felder).";
+            }
+            else if (result.Success)
+            {
+                // Unreachable: ScanCoordinator.RevertAsync populates RestoredSnapshot on success.
+                // Guard so a future contract change doesn't NRE silently.
+                row.EndRevertFailure("Revert ok, aber kein Snapshot zurückgeliefert.");
+                FailedCount++;
             }
             else
             {

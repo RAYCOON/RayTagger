@@ -126,11 +126,14 @@ public sealed class BackupSidecarWriterTests : IDisposable
     }
 
     [Fact]
-    public void Sidecar_read_handles_pre_feature_sidecars_without_mood_and_set_position()
+    public void Sidecar_read_returns_null_mood_when_yaml_key_missing()
     {
-        // A sidecar written before Mood/SetPosition support landed has no mood / set_position
-        // keys. The deserialiser should leave both as null so RestoreHandler can opt out of
-        // clearing on-disk values.
+        // The deserialiser leaves missing keys as null so callers can detect "this sidecar
+        // never knew about this field". Restore consumers used to wrap that null in
+        // ResolvedField.Empty to protect pre-feature backups, but no such backups exist in
+        // user history — and the protection silently broke real revert on rows that
+        // legitimately had null at backup time. New contract: null in the snapshot means
+        // "write null", i.e. clear the on-disk frame.
         var sidecarPath = Path.Combine(_tempDir, "song.mp3.tagger.bak.20240101-000000-000.yaml");
         File.WriteAllText(sidecarPath, """
             schema_version: 1

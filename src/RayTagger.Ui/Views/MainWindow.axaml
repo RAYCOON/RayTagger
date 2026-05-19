@@ -80,7 +80,7 @@
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Datei" Width="220" Binding="{Binding FileName}"/>
                 <DataGridTextColumn Header="Status" Width="110" Binding="{Binding StatusLabel}"/>
-                <DataGridTextColumn Header="Genre (alt → neu)" Width="220">
+                <DataGridTextColumn Header="Genre (aktuell → neu)" Width="220">
                     <DataGridTextColumn.Binding>
                         <MultiBinding StringFormat="{}{0} → {1}">
                             <Binding Path="ExistingGenre" FallbackValue=""/>

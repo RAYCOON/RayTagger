@@ -227,7 +227,11 @@ public sealed class ScanCoordinator
                 TryDeleteSidecar(sidecarPath);
                 _logger.LogInformation("Reverted {Path} from sidecar; {Count} fields restored",
                     audioPath, result.WrittenFields.Count);
-                return new ApplyResult(Success: true, WrittenFields: result.WrittenFields, ErrorMessage: null);
+                return new ApplyResult(
+                    Success: true,
+                    WrittenFields: result.WrittenFields,
+                    ErrorMessage: null,
+                    RestoredSnapshot: snapshot);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or MetadataException)
             {
@@ -260,11 +264,13 @@ public sealed class ScanCoordinator
     }
 
     /// <summary>
-    /// Mirrors <c>RestoreHandler.ToResolvedTrackTags</c>: every snapshot field flows back as
-    /// <see cref="TagFieldSource.Rules"/> so the writer treats it as "must write, regardless of
-    /// policy". <see cref="TrackTags.Mood"/> / <see cref="TrackTags.SetPosition"/> stay
-    /// <see cref="ResolvedField.Empty{T}"/> when the snapshot has no value — protects pre-feature
-    /// sidecars from clearing fields they couldn't capture at backup time.
+    /// Every snapshot field flows back as <see cref="TagFieldSource.Rules"/> so the writer treats
+    /// it as "must write, regardless of policy" — including a null Mood / SetPosition, which the
+    /// writer translates into a frame-clear. Earlier versions wrapped null in
+    /// <see cref="ResolvedField.Empty{T}"/> to "protect pre-feature sidecars", but no such
+    /// sidecars exist in this codebase's user history (Mood / SetPosition serialisation landed
+    /// before any Apply ever ran), and the protective branch silently broke real revert on rows
+    /// that legitimately had no mood at backup time.
     /// </summary>
     private static ResolvedTrackTags SnapshotToResolved(TrackTags snapshot)
     {
@@ -279,12 +285,8 @@ public sealed class ScanCoordinator
             Bpm: new ResolvedValueField<double>(snapshot.Bpm, TagFieldSource.Rules, 1.0),
             Key: new ResolvedField<MusicalKey>(snapshot.Key, TagFieldSource.Rules, 1.0),
             Energy: new ResolvedValueField<int>(snapshot.Energy, TagFieldSource.Rules, 1.0),
-            Mood: snapshot.Mood is null
-                ? ResolvedField.Empty<string>()
-                : new ResolvedField<string>(snapshot.Mood, TagFieldSource.Rules, 1.0),
-            SetPosition: snapshot.SetPosition is null
-                ? ResolvedField.Empty<string>()
-                : new ResolvedField<string>(snapshot.SetPosition, TagFieldSource.Rules, 1.0),
+            Mood: new ResolvedField<string>(snapshot.Mood, TagFieldSource.Rules, 1.0),
+            SetPosition: new ResolvedField<string>(snapshot.SetPosition, TagFieldSource.Rules, 1.0),
             Custom: custom);
     }
 
@@ -363,9 +365,16 @@ public sealed class ScanCoordinator
 }
 
 /// <summary>
-/// Outcome of a single <see cref="ScanCoordinator.ApplyAsync"/> call. <see cref="Success"/> is
-/// false when the file was inaccessible, locked, or the writer threw an IO/permission error; the
-/// row VM surfaces the message in its error badge.
+/// Outcome of a single <see cref="ScanCoordinator.ApplyAsync"/> or
+/// <see cref="ScanCoordinator.RevertAsync"/> call. <see cref="Success"/> is false when the file
+/// was inaccessible, locked, or the writer threw an IO/permission error; the row VM surfaces
+/// the message in its error badge. <see cref="RestoredSnapshot"/> is populated only by
+/// <c>RevertAsync</c> so the row can lift its Existing-* values to the restored state without
+/// re-reading the file.
 /// </summary>
-public sealed record ApplyResult(bool Success, IReadOnlyList<string> WrittenFields, string? ErrorMessage);
+public sealed record ApplyResult(
+    bool Success,
+    IReadOnlyList<string> WrittenFields,
+    string? ErrorMessage,
+    TrackTags? RestoredSnapshot = null);
 

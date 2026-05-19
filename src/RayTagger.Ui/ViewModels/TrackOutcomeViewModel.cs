@@ -165,18 +165,41 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     }
 
     /// <summary>
-    /// After a successful Revert: the file on disk now holds the snapshot values, but we don't
-    /// know what they were precisely without re-reading. Flip back to "Würde ändern" so the user
-    /// can re-scan to see the new (restored) Existing state, and clear HasSidecar because the
-    /// Revert deleted it. The status label reverts to "Reverted" briefly so they see feedback.
+    /// After a successful Revert: lift every Existing-* to the snapshot values so the diff
+    /// column reflects what's actually on disk. The Proposed-* values stay as they were (cached
+    /// from the original scan) — that's intentional, it lets the user see "the rules would
+    /// re-apply these changes if you click Anwenden again". HasSidecar clears because the
+    /// coordinator deleted the file. StatusLabel flips back to "Würde ändern" iff the proposed
+    /// state still differs from the restored existing state — otherwise "Unverändert".
     /// </summary>
-    public void EndRevertSuccess()
+    public void EndRevertSuccess(TrackTags restored)
     {
+        ArgumentNullException.ThrowIfNull(restored);
+
+        ExistingGenre = restored.Genre;
+        ExistingSubGenre = restored.SubGenre;
+        ExistingBpm = restored.Bpm;
+        ExistingKey = restored.Key?.Standard;
+        ExistingEnergy = restored.Energy;
+        ExistingMood = restored.Mood;
+        ExistingSetPosition = restored.SetPosition;
+
         IsReverting = false;
         HasSidecar = false;
-        Status = PipelineStatus.Skipped;  // Skipped is the closest neutral status — neither Written nor Failed.
-        StatusLabel = "Reverted";
+        // Reset Status to neutral. The label below picks the right tone based on whether the
+        // proposed state would still change anything against the restored existing state.
+        Status = PipelineStatus.Skipped;
+        StatusLabel = StillHasProposedChanges(restored) ? "Würde ändern" : "Unverändert";
     }
+
+    private bool StillHasProposedChanges(TrackTags restored) =>
+        !string.Equals(restored.Genre, ProposedGenre, StringComparison.Ordinal)
+        || !string.Equals(restored.SubGenre, ProposedSubGenre, StringComparison.Ordinal)
+        || restored.Bpm != ProposedBpm
+        || !string.Equals(restored.Key?.Standard, ProposedKey, StringComparison.Ordinal)
+        || restored.Energy != ProposedEnergy
+        || !string.Equals(restored.Mood, ProposedMood, StringComparison.Ordinal)
+        || !string.Equals(restored.SetPosition, ProposedSetPosition, StringComparison.Ordinal);
 
     /// <summary>Revert failed — show the error, keep HasSidecar true so the user can retry.</summary>
     public void EndRevertFailure(string error)

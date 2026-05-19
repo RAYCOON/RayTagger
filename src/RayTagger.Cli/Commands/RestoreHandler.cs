@@ -111,28 +111,25 @@ internal static class RestoreHandler
     private static ResolvedTrackTags ToResolvedTrackTags(TrackTags snapshot)
     {
         // Source = Rules with confidence 1 means "must write, regardless of policy" — exactly
-        // the restore semantics. Custom fields are rebuilt identically.
+        // the restore semantics. Every field flows through this way, INCLUDING a null Mood /
+        // SetPosition, which the writer translates into a frame-clear. Earlier code wrapped null
+        // in ResolvedField.Empty to "protect pre-feature sidecars"; but no such sidecars exist in
+        // this codebase's user history (the Mood/SetPosition serialisation landed before any real
+        // Apply ever ran), and the protective branch silently broke real revert on rows that
+        // legitimately had no mood at backup time.
         var custom = snapshot.Custom.ToDictionary(
             kv => kv.Key,
             kv => new ResolvedField<string>(kv.Value, TagFieldSource.Rules, 1.0),
             StringComparer.OrdinalIgnoreCase);
 
-        // Mood + SetPosition fall back to Empty when the snapshot has no value: a pre-feature
-        // sidecar literally couldn't carry them, and forcing a null-Rules write would clear any
-        // value the file currently holds. New-format sidecars that DID record the field — even
-        // a non-null one — flow through as Rules and overwrite as expected.
         return new ResolvedTrackTags(
             Genre: new ResolvedField<string>(snapshot.Genre, TagFieldSource.Rules, 1.0),
             SubGenre: new ResolvedField<string>(snapshot.SubGenre, TagFieldSource.Rules, 1.0),
             Bpm: new ResolvedValueField<double>(snapshot.Bpm, TagFieldSource.Rules, 1.0),
             Key: new ResolvedField<MusicalKey>(snapshot.Key, TagFieldSource.Rules, 1.0),
             Energy: new ResolvedValueField<int>(snapshot.Energy, TagFieldSource.Rules, 1.0),
-            Mood: snapshot.Mood is null
-                ? ResolvedField.Empty<string>()
-                : new ResolvedField<string>(snapshot.Mood, TagFieldSource.Rules, 1.0),
-            SetPosition: snapshot.SetPosition is null
-                ? ResolvedField.Empty<string>()
-                : new ResolvedField<string>(snapshot.SetPosition, TagFieldSource.Rules, 1.0),
+            Mood: new ResolvedField<string>(snapshot.Mood, TagFieldSource.Rules, 1.0),
+            SetPosition: new ResolvedField<string>(snapshot.SetPosition, TagFieldSource.Rules, 1.0),
             Custom: custom);
     }
 
