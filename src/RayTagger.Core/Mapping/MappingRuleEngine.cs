@@ -36,7 +36,12 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(ruleset);
 
-        var context = new EvaluationContext(tags, existing, file, ruleset.Defaults);
+        // Per-field specificity tracker. Higher-specificity rules WIN over lower ones — letting a
+        // generic catch-all (e.g. "House → mood Groovy") sit at the bottom of the file as an
+        // intentional fallback without stomping more-targeted rules above it. Equal specificity
+        // = first rule keeps the field (predictable: ordering within a spec tier doesn't matter).
+        var fieldSpec = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var context = new EvaluationContext(tags, existing, file, ruleset.Defaults, fieldSpec);
         var applied = new List<MappingRuleHit>();
 
         foreach (var rule in ruleset.Rules)
@@ -46,7 +51,8 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
                 continue;
             }
 
-            var (newTags, changedFields) = Apply(rule.Set, context.Tags, taxonomy);
+            var ruleSpec = ComputeSpecificity(rule.When);
+            var (newTags, changedFields) = Apply(rule.Set, context.Tags, taxonomy, fieldSpec, ruleSpec);
             context = context with { Tags = newTags };
             applied.Add(new MappingRuleHit(rule.Name, changedFields));
 
@@ -57,6 +63,38 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         }
 
         return new MappingEvaluationResult(context.Tags, applied);
+    }
+
+    /// <summary>
+    /// Counts the number of conditions a <see cref="WhenClause"/> placed on the match. Drives the
+    /// "best match wins" overwrite policy in <see cref="Apply"/> — a rule with more constraints
+    /// gets to overwrite values set by rules with fewer constraints, so generic fallbacks at the
+    /// bottom of the file don't undo specific rules above.
+    /// </summary>
+    /// <remarks>
+    /// <c>any_of</c> uses the max branch (the rule matched via the most-specific branch); <c>all_of</c>
+    /// sums every branch (every constraint must have held). <c>not</c> contributes 1 — it's a
+    /// constraint regardless of how the negated clause was structured.
+    /// </remarks>
+    internal static int ComputeSpecificity(WhenClause? when)
+    {
+        if (when is null) return 0;
+        var s = 0;
+        if (when.Genre is not null) s++;
+        if (when.Subgenre is not null) s++;
+        if (when.GenreRegex is not null) s++;
+        if (when.SubgenreRegex is not null) s++;
+        if (when.Bpm is not null) s++;
+        if (when.Energy is not null) s++;
+        if (when.Key.Count > 0) s++;
+        if (when.KeyMode is not null) s++;
+        if (when.Artist.Count > 0) s++;
+        if (when.ArtistRegex is not null) s++;
+        if (when.PathGlob is not null) s++;
+        if (when.AnyOf.Count > 0) s += when.AnyOf.Max(ComputeSpecificity);
+        if (when.AllOf.Count > 0) s += when.AllOf.Sum(ComputeSpecificity);
+        if (when.Not is not null) s++;
+        return s;
     }
 
     // -------- Predicate evaluation --------------------------------------------------------------
@@ -233,7 +271,9 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
     private static (ResolvedTrackTags Tags, IReadOnlyList<string> Changed) Apply(
         SetClause set,
         ResolvedTrackTags tags,
-        Taxonomy? taxonomy)
+        Taxonomy? taxonomy,
+        Dictionary<string, int> fieldSpec,
+        int ruleSpec)
     {
         var changed = new List<string>();
         var newGenre = tags.Genre;
@@ -242,35 +282,52 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         var newMood = tags.Mood;
         var newSetPosition = tags.SetPosition;
 
+        // Strict > so equal-specificity rules don't shadow each other — first match in order
+        // keeps the field. Per-field map; a rule that touches mood doesn't lock genre.
+        static bool CanOverwrite(Dictionary<string, int> spec, string field, int ruleSpec) =>
+            !spec.TryGetValue(field, out var current) || ruleSpec > current;
+
         // normalise_genre runs FIRST so a later explicit genre/subgenre in the same rule can still
         // overwrite it. Looks up the current resolved Genre in taxonomy.NormaliseByAlias.
         if (set.NormaliseGenre && taxonomy is not null && !string.IsNullOrEmpty(tags.Genre.Value)
             && taxonomy.NormaliseByAlias.TryGetValue(tags.Genre.Value, out var canonical))
         {
-            newGenre = new ResolvedField<string>(canonical.Genre, TagFieldSource.Rules, 1.0);
-            newSubGenre = new ResolvedField<string>(canonical.Subgenre, TagFieldSource.Rules, 1.0);
-            changed.Add("genre");
-            changed.Add("subgenre");
+            if (CanOverwrite(fieldSpec, "genre", ruleSpec))
+            {
+                newGenre = new ResolvedField<string>(canonical.Genre, TagFieldSource.Rules, 1.0);
+                fieldSpec["genre"] = ruleSpec;
+                changed.Add("genre");
+            }
+            if (CanOverwrite(fieldSpec, "subgenre", ruleSpec))
+            {
+                newSubGenre = new ResolvedField<string>(canonical.Subgenre, TagFieldSource.Rules, 1.0);
+                fieldSpec["subgenre"] = ruleSpec;
+                changed.Add("subgenre");
+            }
         }
 
-        if (set.Genre is not null)
+        if (set.Genre is not null && CanOverwrite(fieldSpec, "genre", ruleSpec))
         {
             newGenre = new ResolvedField<string>(NormaliseSetValue(set.Genre), TagFieldSource.Rules, 1.0);
+            fieldSpec["genre"] = ruleSpec;
             if (!changed.Contains("genre")) changed.Add("genre");
         }
-        if (set.Subgenre is not null)
+        if (set.Subgenre is not null && CanOverwrite(fieldSpec, "subgenre", ruleSpec))
         {
             newSubGenre = new ResolvedField<string>(NormaliseSetValue(set.Subgenre), TagFieldSource.Rules, 1.0);
+            fieldSpec["subgenre"] = ruleSpec;
             if (!changed.Contains("subgenre")) changed.Add("subgenre");
         }
-        if (set.Mood is not null)
+        if (set.Mood is not null && CanOverwrite(fieldSpec, "mood", ruleSpec))
         {
             newMood = new ResolvedField<string>(NormaliseSetValue(set.Mood), TagFieldSource.Rules, 1.0);
+            fieldSpec["mood"] = ruleSpec;
             changed.Add("mood");
         }
-        if (set.SetPosition is not null)
+        if (set.SetPosition is not null && CanOverwrite(fieldSpec, "set_position", ruleSpec))
         {
             newSetPosition = new ResolvedField<string>(NormaliseSetValue(set.SetPosition), TagFieldSource.Rules, 1.0);
+            fieldSpec["set_position"] = ruleSpec;
             changed.Add("set_position");
         }
 
@@ -278,10 +335,12 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         // (and then the writer would overwrite a perfectly valid TBPM frame with 0). Require
         // a positive BPM before the transform fires.
         if (set.BpmTransform is BpmTransform t and not BpmTransform.None
-            && tags.Bpm.Value is double bpmValue && bpmValue > 0)
+            && tags.Bpm.Value is double bpmValue && bpmValue > 0
+            && CanOverwrite(fieldSpec, "bpm", ruleSpec))
         {
             var factor = t == BpmTransform.Double ? 2.0 : 0.5;
             newBpm = new ResolvedValueField<double>(bpmValue * factor, TagFieldSource.Rules, 1.0);
+            fieldSpec["bpm"] = ruleSpec;
             changed.Add("bpm");
         }
 
@@ -289,17 +348,26 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         if (set.ExtraTags.Count > 0 || set.AddKeyword is not null)
         {
             var mutable = new Dictionary<string, ResolvedField<string>>(tags.Custom, StringComparer.OrdinalIgnoreCase);
+            var mutated = false;
             foreach (var (key, value) in set.ExtraTags)
             {
+                var fieldKey = $"tag.{key}";
+                if (!CanOverwrite(fieldSpec, fieldKey, ruleSpec)) continue;
                 mutable[key] = new ResolvedField<string>(NormaliseSetValue(value), TagFieldSource.Rules, 1.0);
-                changed.Add($"tag.{key}");
+                fieldSpec[fieldKey] = ruleSpec;
+                changed.Add(fieldKey);
+                mutated = true;
             }
             if (set.AddKeyword is not null)
             {
+                // Append, not overwrite — every rule that calls add_keyword contributes, regardless
+                // of specificity. The "tag.keywords" spec stays at its current value (or unset) so
+                // a later set: { tag.keywords: ... } can still apply its overwrite gate cleanly.
                 mutable["keywords"] = AppendKeyword(mutable, "keywords", set.AddKeyword);
                 changed.Add("tag.keywords");
+                mutated = true;
             }
-            newCustom = mutable;
+            if (mutated) newCustom = mutable;
         }
 
         return (tags with
@@ -333,5 +401,6 @@ public sealed class MappingRuleEngine : IMappingRuleEngine
         ResolvedTrackTags Tags,
         TrackTags? Existing,
         TrackFile File,
-        MappingDefaults Defaults);
+        MappingDefaults Defaults,
+        Dictionary<string, int> FieldSpec);
 }

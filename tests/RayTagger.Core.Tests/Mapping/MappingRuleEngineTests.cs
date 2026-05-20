@@ -468,6 +468,100 @@ public class MappingRuleEngineTests
         result.Tags.SetPosition.Source.Should().Be(TagFieldSource.Rules);
     }
 
+    // ===== Specificity / best-match wins =============================================================
+
+    [Fact]
+    public void Higher_specificity_rule_wins_over_generic_fallback_regardless_of_order()
+    {
+        // Specific rule fires first; later catch-all should NOT overwrite the more-specific value.
+        var specific = new MappingRule
+        {
+            Name = "House+Tech+BPM band → Driving",
+            When = new WhenClause
+            {
+                Genre = GenrePattern.FromLiterals(["House"]),
+                Subgenre = GenrePattern.FromLiterals(["Tech"]),
+                Bpm = new NumericRange { Min = 124, Max = 132 },
+            },
+            Set = new SetClause { Mood = "Driving" },
+            OnMatch = OnMatch.Continue,
+        };
+        var fallback = new MappingRule
+        {
+            Name = "House → Groovy",
+            When = new WhenClause { Genre = GenrePattern.FromLiterals(["House"]) },
+            Set = new SetClause { Mood = "Groovy" },
+            OnMatch = OnMatch.Continue,
+        };
+
+        var tags = ResolvedTrackTags.Empty with
+        {
+            Genre = new ResolvedField<string>("House", TagFieldSource.Existing, 1.0),
+            SubGenre = new ResolvedField<string>("Tech", TagFieldSource.Existing, 1.0),
+            Bpm = new ResolvedValueField<double>(126.0, TagFieldSource.Analysis, 1.0),
+        };
+
+        var ruleset = new MappingRuleSet { Rules = [specific, fallback] };
+        var result = Engine.Evaluate(tags, existing: null, DefaultFile, ruleset);
+
+        result.Tags.Mood.Value.Should().Be("Driving",
+            because: "the spec-3 rule's mood should not be stomped by the spec-1 generic fallback");
+    }
+
+    [Fact]
+    public void Equal_specificity_keeps_first_match()
+    {
+        // Both rules match with identical specificity (spec=1 each: just genre). First wins; the
+        // second's set: { mood: ... } is gated out so ordering within a tier stays predictable.
+        var first = new MappingRule
+        {
+            Name = "first",
+            When = new WhenClause { Genre = GenrePattern.FromLiterals(["House"]) },
+            Set = new SetClause { Mood = "Alpha" },
+            OnMatch = OnMatch.Continue,
+        };
+        var second = new MappingRule
+        {
+            Name = "second",
+            When = new WhenClause { Genre = GenrePattern.FromLiterals(["House"]) },
+            Set = new SetClause { Mood = "Beta" },
+            OnMatch = OnMatch.Continue,
+        };
+
+        var ruleset = new MappingRuleSet { Rules = [first, second] };
+        var result = Engine.Evaluate(WithGenre("House"), existing: null, DefaultFile, ruleset);
+
+        result.Tags.Mood.Value.Should().Be("Alpha");
+    }
+
+    [Theory]
+    [InlineData(0)]   // null when
+    public void ComputeSpecificity_null_clause_is_zero(int expected)
+    {
+        MappingRuleEngine.ComputeSpecificity(null).Should().Be(expected);
+    }
+
+    [Fact]
+    public void ComputeSpecificity_counts_each_condition_plus_best_any_of_branch()
+    {
+        // genre + any_of(branchA=1, branchB=2) + bpm = 1 + 2 + 1 = 4
+        var when = new WhenClause
+        {
+            Genre = GenrePattern.FromLiterals(["House"]),
+            Bpm = new NumericRange { Min = 100, Max = 130 },
+            AnyOf =
+            {
+                new WhenClause { Genre = GenrePattern.FromLiterals(["Techno"]) },
+                new WhenClause
+                {
+                    Genre = GenrePattern.FromLiterals(["House"]),
+                    Subgenre = GenrePattern.FromLiterals(["Tech"]),
+                },
+            },
+        };
+        MappingRuleEngine.ComputeSpecificity(when).Should().Be(4);
+    }
+
     // ===== Helpers ===================================================================================
 
     private static MappingRule MakeRule(string name, WhenClause when, SetClause set) =>
