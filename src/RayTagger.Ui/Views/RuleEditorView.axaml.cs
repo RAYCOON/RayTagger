@@ -137,4 +137,26 @@ public partial class RuleEditorView : UserControl
             await _boundVm.LoadAsync(localPath);
         }
     }
+
+    /// <summary>
+    /// Picks a single audio file and runs the current editor buffer's rules against it. Result is
+    /// rendered in a modal <see cref="RuleTestResultDialog"/> — same shape as the CLI
+    /// <c>tagger explain</c> verb. Read + Map only; no analysis, no lookup, no write.
+    /// </summary>
+    private async void OnTestAgainstFileClick(object? sender, RoutedEventArgs e)
+    {
+        if (TopLevel.GetTopLevel(this) is not Window owner || _boundVm is null) return;
+
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Datei für Regel-Test wählen",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("Audio") { Patterns = ["*.mp3", "*.flac", "*.aiff", "*.aif"] }],
+        });
+
+        if (files.Count == 0 || files[0].TryGetLocalPath() is not { } localPath) return;
+
+        var result = await _boundVm.TestAgainstFileAsync(localPath);
+        await RuleTestResultDialog.ShowAsync(owner, result);
+    }
 }

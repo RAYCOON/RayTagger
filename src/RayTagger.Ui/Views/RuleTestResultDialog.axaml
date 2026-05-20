@@ -1,0 +1,125 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:RayTagger.Ui.ViewModels"
+        xmlns:views="using:RayTagger.Ui.Views"
+        x:Class="RayTagger.Ui.Views.RuleTestResultDialog"
+        x:DataType="vm:RuleTestResult"
+        Title="Regel-Test"
+        Width="640" Height="600"
+        MinWidth="420" MinHeight="360"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
+
+        <!-- File header. Always visible — orients the user immediately. -->
+        <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="{Binding FileName}" FontSize="14" FontWeight="SemiBold"/>
+            <TextBlock Text="{Binding FilePath}"
+                       Opacity="0.6"
+                       FontSize="11"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding FilePath}"/>
+        </StackPanel>
+
+        <!-- Error banner. Shown only when the rule engine couldn't run end-to-end. -->
+        <Border Grid.Row="1"
+                Margin="0,12,0,0"
+                Padding="10,8"
+                CornerRadius="4"
+                Background="{DynamicResource SystemControlErrorTextForegroundBrush}"
+                IsVisible="{Binding HasError}">
+            <TextBlock Text="{Binding ErrorMessage}"
+                       Foreground="White"
+                       TextWrapping="Wrap"/>
+        </Border>
+
+        <!-- Stacked tables. Wrapped in a ScrollViewer so a track with lots of rule hits doesn't
+             blow up the dialog height. Hidden when HasError is true — error + tables would just
+             be noisy. -->
+        <ScrollViewer Grid.Row="2"
+                      Margin="0,12,0,0"
+                      IsVisible="{Binding !HasError}"
+                      VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="14">
+
+                <!-- Existing tags -->
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Vorhandene Tags" FontWeight="SemiBold"/>
+                    <ItemsControl Name="ExistingItems">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="views:RuleTestRow">
+                                <Grid ColumnDefinitions="120,*" Margin="0,1">
+                                    <TextBlock Grid.Column="0" Text="{Binding Field}" Opacity="0.7"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Value}"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Matched rules — switches to a "no match" notice when empty. -->
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Gegriffene Regeln" FontWeight="SemiBold"/>
+                    <TextBlock Text="Keine Regel hat gegriffen."
+                               Opacity="0.6"
+                               FontStyle="Italic"
+                               IsVisible="{Binding !AnyRuleMatched}"/>
+                    <ItemsControl Name="AppliedItems"
+                                  IsVisible="{Binding AnyRuleMatched}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="views:RuleTestRuleRow">
+                                <Border Padding="8,6"
+                                        Margin="0,2"
+                                        CornerRadius="3"
+                                        Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock>
+                                            <Run Text="#"/>
+                                            <Run Text="{Binding Index}"/>
+                                            <Run Text="  "/>
+                                            <Run Text="{Binding RuleName}" FontWeight="SemiBold"/>
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Opacity="0.7">
+                                            <Run Text="Geänderte Felder: "/>
+                                            <Run Text="{Binding ChangedFields}"/>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Final resolved values + source per field. -->
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Finale Werte nach Regeln" FontWeight="SemiBold"/>
+                    <ItemsControl Name="FinalItems">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="views:RuleTestFinalRow">
+                                <Grid ColumnDefinitions="120,*,90" Margin="0,1">
+                                    <TextBlock Grid.Column="0" Text="{Binding Field}" Opacity="0.7"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Value}"/>
+                                    <TextBlock Grid.Column="2" Text="{Binding Source}"
+                                               Opacity="0.6" FontSize="11"
+                                               HorizontalAlignment="Right"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer. Close button only — read-only dialog. -->
+        <StackPanel Grid.Row="3"
+                    Margin="0,12,0,0"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Content="Schließen"
+                    Classes="accent"
+                    MinWidth="100"
+                    Click="OnCloseClick"/>
+        </StackPanel>
+    </Grid>
+</Window>

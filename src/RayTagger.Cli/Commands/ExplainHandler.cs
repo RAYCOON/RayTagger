@@ -71,7 +71,7 @@ internal static class ExplainHandler
         // Map-stage only — no analysis, so synthesize an "Existing"-sourced ResolvedTrackTags from
         // the disk values. This is exactly what the user wants to see: "given these existing tags,
         // which rules fire?". Mixing in analysis would confuse the debugging story.
-        var resolved = BuildResolvedFromExisting(existing);
+        var resolved = ResolvedFromExistingBuilder.Build(existing);
 
         var engine = new MappingRuleEngine();
         var result = engine.Evaluate(resolved, existing, trackFile, rules, options.Taxonomy.Loaded);
@@ -81,31 +81,6 @@ internal static class ExplainHandler
         await Task.CompletedTask.ConfigureAwait(false);
         return ExitCodes.Success;
     }
-
-    private static ResolvedTrackTags BuildResolvedFromExisting(TrackTags existing) =>
-        new(
-            Genre: existing.Genre is null
-                ? ResolvedField.Empty<string>()
-                : new ResolvedField<string>(existing.Genre, TagFieldSource.Existing, 1.0),
-            SubGenre: existing.SubGenre is null
-                ? ResolvedField.Empty<string>()
-                : new ResolvedField<string>(existing.SubGenre, TagFieldSource.Existing, 1.0),
-            Bpm: existing.Bpm is null
-                ? ResolvedField.EmptyValue<double>()
-                : new ResolvedValueField<double>(existing.Bpm, TagFieldSource.Existing, 1.0),
-            Key: existing.Key is null
-                ? ResolvedField.Empty<MusicalKey>()
-                : new ResolvedField<MusicalKey>(existing.Key, TagFieldSource.Existing, 1.0),
-            Energy: existing.Energy is null
-                ? ResolvedField.EmptyValue<int>()
-                : new ResolvedValueField<int>(existing.Energy, TagFieldSource.Existing, 1.0),
-            Mood: existing.Mood is null
-                ? ResolvedField.Empty<string>()
-                : new ResolvedField<string>(existing.Mood, TagFieldSource.Existing, 1.0),
-            SetPosition: existing.SetPosition is null
-                ? ResolvedField.Empty<string>()
-                : new ResolvedField<string>(existing.SetPosition, TagFieldSource.Existing, 1.0),
-            Custom: new Dictionary<string, ResolvedField<string>>(StringComparer.OrdinalIgnoreCase));
 
     private static void RenderReport(IAnsiConsole console, FileInfo file, TrackTags existing, MappingEvaluationResult result)
     {

@@ -21,6 +21,9 @@
                 <Button Content="Neu laden"
                         Command="{Binding ReloadCommand}"
                         ToolTip.Tip="Liest die Datei erneut von Disk und verwirft ungespeicherte Änderungen."/>
+                <Button Content="Gegen Datei testen…"
+                        Click="OnTestAgainstFileClick"
+                        ToolTip.Tip="Wendet die aktuell im Editor stehenden Regeln auf eine einzelne Datei an (kein Schreiben). Nur Read + Map — wie 'tagger explain'."/>
                 <TextBlock VerticalAlignment="Center"
                            Margin="8,0,0,0"
                            Text="{Binding FilePath, FallbackValue='(keine Datei geladen)'}"

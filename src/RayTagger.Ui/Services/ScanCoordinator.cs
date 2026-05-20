@@ -41,6 +41,14 @@ public sealed class ScanCoordinator
     /// <summary>Loaded taxonomy from the last scan — used by the Rule Editor for live validation. Defaults to empty.</summary>
     public Taxonomy LastTaxonomy => _lastOptions?.Taxonomy.Loaded ?? Taxonomy.Empty;
 
+    /// <summary>
+    /// Fires whenever <see cref="_lastOptions"/> changes (i.e. a new scan loaded a config). The
+    /// <see cref="RayTagger.Ui.ViewModels.RuleEditorViewModel"/> subscribes so it can auto-load the
+    /// mappings file the moment the scan picks one up, without depending on TabControl
+    /// SelectionChanged timing.
+    /// </summary>
+    public event EventHandler<EventArgs>? OptionsLoaded;
+
     public ScanCoordinator(
         IFileDiscoveryService discovery,
         ITagReaderAdapter reader,
@@ -91,6 +99,9 @@ public sealed class ScanCoordinator
 
         var (options, rules) = LoadOrDefaults(sourceDirectory);
         _lastOptions = options;  // Keep for ApplyAsync — same options used for the dry-run scan.
+        // Signal the Rule Editor so it can auto-load mappings.yaml the moment a scan starts —
+        // independent of when (or whether) the user switches to the Regeln tab.
+        OptionsLoaded?.Invoke(this, EventArgs.Empty);
 
         var built = await _pipelineFactory.BuildAsync(options, _statusReporter, cancellationToken).ConfigureAwait(false);
 
