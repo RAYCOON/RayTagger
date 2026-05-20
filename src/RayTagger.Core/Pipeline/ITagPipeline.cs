@@ -15,5 +15,6 @@ public interface ITagPipeline
     IAsyncEnumerable<PipelineOutcome> RunAsync(
         TaggerOptions options,
         MappingRuleSet rules,
+        Func<TrackFile, ValueTask>? onFileStarted = null,
         CancellationToken cancellationToken = default);
 }

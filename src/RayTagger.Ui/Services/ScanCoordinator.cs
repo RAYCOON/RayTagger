@@ -25,6 +25,7 @@ public sealed class ScanCoordinator
     private readonly ISortService _sortService;
     private readonly PipelineFactory _pipelineFactory;
     private readonly SidecarRestoreService _sidecarRestore;
+    private readonly LibraryDiscoveryService _libraryDiscovery;
     private readonly UiToolStatusReporter _statusReporter;
     private readonly ILogger<ScanCoordinator> _logger;
     private readonly ILoggerFactory _loggerFactory;
@@ -57,6 +58,7 @@ public sealed class ScanCoordinator
         ISortService sortService,
         PipelineFactory pipelineFactory,
         SidecarRestoreService sidecarRestore,
+        LibraryDiscoveryService libraryDiscovery,
         UiToolStatusReporter statusReporter,
         ILogger<ScanCoordinator> logger,
         ILoggerFactory loggerFactory)
@@ -68,6 +70,7 @@ public sealed class ScanCoordinator
         ArgumentNullException.ThrowIfNull(sortService);
         ArgumentNullException.ThrowIfNull(pipelineFactory);
         ArgumentNullException.ThrowIfNull(sidecarRestore);
+        ArgumentNullException.ThrowIfNull(libraryDiscovery);
         ArgumentNullException.ThrowIfNull(statusReporter);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(loggerFactory);
@@ -79,9 +82,33 @@ public sealed class ScanCoordinator
         _sortService = sortService;
         _pipelineFactory = pipelineFactory;
         _sidecarRestore = sidecarRestore;
+        _libraryDiscovery = libraryDiscovery;
         _statusReporter = statusReporter;
         _logger = logger;
         _loggerFactory = loggerFactory;
+    }
+
+    /// <summary>
+    /// First-pass library discovery: enumerates audio files + reads their existing tags so the UI
+    /// can populate the grid before the (expensive) analyze/lookup/rules pipeline runs. Loads the
+    /// tagger.yaml config the same way <see cref="ScanAsync"/> does so the rule editor's
+    /// <see cref="OptionsLoaded"/> auto-load kicks in immediately.
+    /// </summary>
+    public async IAsyncEnumerable<TrackPreview> DiscoverAsync(
+        string sourceDirectory,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceDirectory);
+
+        var (options, _) = LoadOrDefaults(sourceDirectory);
+        _lastOptions = options;
+        OptionsLoaded?.Invoke(this, EventArgs.Empty);
+
+        _logger.LogInformation("Starting UI discovery of {Source}", sourceDirectory);
+        await foreach (var preview in _libraryDiscovery.DiscoverAsync(options.Scan, cancellationToken).ConfigureAwait(false))
+        {
+            yield return preview;
+        }
     }
 
     /// <summary>
@@ -92,6 +119,7 @@ public sealed class ScanCoordinator
     /// </summary>
     public async IAsyncEnumerable<PipelineOutcome> ScanAsync(
         string sourceDirectory,
+        Func<TrackFile, ValueTask>? onFileStarted = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceDirectory);
@@ -116,7 +144,7 @@ public sealed class ScanCoordinator
             _loggerFactory.CreateLogger<TagPipeline>());
 
         _logger.LogInformation("Starting UI scan of {Source}", sourceDirectory);
-        await foreach (var outcome in pipeline.RunAsync(options, rules, cancellationToken).ConfigureAwait(false))
+        await foreach (var outcome in pipeline.RunAsync(options, rules, onFileStarted, cancellationToken).ConfigureAwait(false))
         {
             yield return outcome;
         }

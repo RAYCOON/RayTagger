@@ -60,7 +60,12 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     private string? _proposedSetPosition;
     [ObservableProperty] private IReadOnlyList<string> _appliedRules = [];
     [ObservableProperty] private string? _destinationPath;
-    public IReadOnlyList<string> Errors { get; }
+    /// <summary>
+    /// Per-stage error messages. Settable so <see cref="UpdateFromOutcome"/> can refresh the list
+    /// when a preview row transitions into a scanned row (the original ctor's init-only assignment
+    /// would lock pre-scan blanks in forever).
+    /// </summary>
+    public IReadOnlyList<string> Errors { get; private set; } = [];
 
     // Per-field diff flags drive the gelbes Cell-Highlight in the results grid. True iff the
     // proposed value differs from the existing one (and we actually have a proposed value to
@@ -199,16 +204,19 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     /// <summary>File size with locale-aware decimal — e.g. "12,4 MB" on German systems.</summary>
     public string SizeDisplay => FormatSize(SourceOutcome.File.SizeBytes);
 
-    /// <summary>Last-modified date in <c>dd.MM.yy</c> form (German short date — matches the user's locale).</summary>
+    /// <summary>Last-modified timestamp in <c>dd.MM.yy HH:mm</c> form (24-hour, German short date).</summary>
     public string ModifiedDisplay =>
-        SourceOutcome.File.LastModifiedUtc.ToLocalTime().ToString("dd.MM.yy", CultureInfo.CurrentCulture);
+        SourceOutcome.File.LastModifiedUtc.ToLocalTime().ToString("dd.MM.yy HH:mm", CultureInfo.CurrentCulture);
 
     /// <summary>
     /// Short three-letter status pill. The full <see cref="StatusLabel"/> still drives the tooltip;
     /// this just gives the leftmost column a fixed-width glyph the user can scan at a glance.
+    /// Empty during discovery (no scan yet); SCN while the pipeline is actively working on the row.
     /// </summary>
     public string StatusBadge => StatusLabel switch
     {
+        "" => "",
+        "Scannen" => "SCN",
         "Würde ändern" => "CNG",
         "Fehler" => "ERR",
         _ => "OK",
@@ -263,6 +271,100 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
 
         ApplyResolvedFromOutcome(outcome);
         Errors = [.. outcome.Errors.Select(e => $"[{e.Stage}] {e.Message}")];
+    }
+
+    /// <summary>
+    /// Preview constructor — used by the Discovery phase when the UI wants to populate the grid
+    /// before any scan runs. Existing-* tags come from the disk read; Proposed-* stays null so
+    /// the diff highlights are off. <see cref="StatusLabel"/> is blank (StatusBadge renders "")
+    /// until either <see cref="BeginScan"/> sets it to "Scannen" or <see cref="UpdateFromOutcome"/>
+    /// promotes it to a terminal "OK / CNG / ERR" state.
+    /// </summary>
+    /// <param name="file">Filesystem identity (path / size / mtime).</param>
+    /// <param name="existing">Tags read off disk during discovery.</param>
+    /// <param name="discoveryError">
+    /// When non-null, the row enters "Fehler" status immediately — used for files whose tag read
+    /// blew up (corrupt header, etc.). The pipeline's scan stage will overwrite this if it succeeds.
+    /// </param>
+    public TrackOutcomeViewModel(TrackFile file, TrackTags existing, string? discoveryError = null)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        ArgumentNullException.ThrowIfNull(existing);
+
+        // Stub PipelineOutcome lets SourceOutcome stay non-nullable. Resolved is empty so the
+        // ApplyResolvedFromOutcome path (not called here) would leave Proposed-* null anyway;
+        // ExistingAtScan carries the disk tags for the UI's Title/Artist/Album/Length getters.
+        SourceOutcome = new PipelineOutcome(
+            File: file,
+            Resolved: ResolvedTrackTags.Empty,
+            AppliedRules: [],
+            DestinationPath: null,
+            Status: PipelineStatus.Skipped,
+            Errors: [],
+            PreMapResolved: null,
+            ExistingAtScan: existing);
+
+        Path = file.Path;
+        FileName = System.IO.Path.GetFileName(file.Path);
+        Status = PipelineStatus.Skipped;
+        StatusLabel = discoveryError is null ? string.Empty : "Fehler";
+        ApplyError = discoveryError;
+        Errors = discoveryError is null ? [] : [$"[Discovery] {discoveryError}"];
+
+        ExistingGenre = existing.Genre;
+        ExistingSubGenre = existing.SubGenre;
+        ExistingBpm = existing.Bpm;
+        ExistingKey = existing.Key?.Standard;
+        ExistingEnergy = existing.Energy;
+        ExistingMood = existing.Mood;
+        ExistingSetPosition = existing.SetPosition;
+        // Proposed-* stay null — no scan output yet, so HasXxxDiff is false everywhere.
+    }
+
+    /// <summary>
+    /// Promotes a preview row to a scanned row: swaps the stub <see cref="SourceOutcome"/> for the
+    /// real pipeline result and recomputes <see cref="StatusLabel"/> + every Existing-/Proposed-*.
+    /// Called by <see cref="ScanViewModel"/> once the pipeline finishes processing the file.
+    /// </summary>
+    public void UpdateFromOutcome(PipelineOutcome outcome, TrackTags existing)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+        ArgumentNullException.ThrowIfNull(existing);
+
+        SourceOutcome = outcome;
+        Status = outcome.Status;
+        StatusLabel = outcome.Status switch
+        {
+            PipelineStatus.Failed => "Fehler",
+            PipelineStatus.Written => "Geschrieben",
+            _ when HasProposedChanges(outcome, existing) => "Würde ändern",
+            _ => "Unverändert",
+        };
+        ApplyError = null;
+        Errors = [.. outcome.Errors.Select(e => $"[{e.Stage}] {e.Message}")];
+
+        ExistingGenre = existing.Genre;
+        ExistingSubGenre = existing.SubGenre;
+        ExistingBpm = existing.Bpm;
+        ExistingKey = existing.Key?.Standard;
+        ExistingEnergy = existing.Energy;
+        ExistingMood = existing.Mood;
+        ExistingSetPosition = existing.SetPosition;
+
+        ApplyResolvedFromOutcome(outcome);
+    }
+
+    /// <summary>Mark the row as "currently being scanned" — flips the badge to SCN.</summary>
+    public void BeginScan() => StatusLabel = "Scannen";
+
+    /// <summary>
+    /// Reset the row to the pre-scan state (empty StatusLabel → empty badge). Used by a re-scan
+    /// to clear any prior CNG/OK/ERR before the pipeline picks rows back up.
+    /// </summary>
+    public void ResetStatus()
+    {
+        StatusLabel = string.Empty;
+        ApplyError = null;
     }
 
     private void ApplyResolvedFromOutcome(PipelineOutcome outcome)

@@ -39,6 +39,7 @@ public static class ServiceCollectionExtensions
         // UI-specific: observable status reporter, scan coordinator, view-models.
         services.AddSingleton<UiToolStatusReporter>();
         services.AddSingleton<IToolStatusReporter>(sp => sp.GetRequiredService<UiToolStatusReporter>());
+        services.AddSingleton<LibraryDiscoveryService>();
         services.AddSingleton<ScanCoordinator>();
         services.AddTransient<MainWindowViewModel>();
         services.AddTransient<ScanViewModel>();

@@ -23,6 +23,7 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     private readonly IMappingRuleEngine _ruleEngine;
     private readonly ILogger<ScanViewModel> _logger;
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _discoveryCts;
     private bool _disposed;
 
     [ObservableProperty]
@@ -38,8 +39,15 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(ApplyAllChangedCommand))]
     private bool _isApplying;
 
-    /// <summary>True while either a scan or apply is running — drives toolbar IsEnabled bindings.</summary>
-    public bool IsBusy => IsScanning || IsApplying;
+    /// <summary>True during the first-pass tag discovery (post folder-pick, pre-scan).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
+    [NotifyCanExecuteChangedFor(nameof(ScanCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyAllChangedCommand))]
+    private bool _isDiscovering;
+
+    /// <summary>True while a scan, apply, or discovery is running — drives toolbar IsEnabled bindings.</summary>
+    public bool IsBusy => IsScanning || IsApplying || IsDiscovering;
 
     [ObservableProperty]
     private int _scannedCount;
@@ -75,6 +83,68 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         _reader = reader;
         _ruleEngine = ruleEngine;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Auto-trigger discovery whenever the source folder changes. Cancels any in-flight discovery
+    /// or scan first so a quick folder-shuffle doesn't leave orphaned tasks behind. Fire-and-forget
+    /// from the property setter is fine — exceptions surface via the logger / status message.
+    /// </summary>
+    partial void OnSourceDirectoryChanged(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        _ = DiscoverAsync(value);
+    }
+
+    /// <summary>
+    /// Walks the new source folder, reads each file's existing tags, and populates the grid with
+    /// preview rows (empty StatusBadge). Cancels any prior scan/discovery before starting.
+    /// </summary>
+    private async Task DiscoverAsync(string sourceDir)
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+        _discoveryCts?.Cancel();
+        _discoveryCts?.Dispose();
+        _discoveryCts = new CancellationTokenSource();
+        var token = _discoveryCts.Token;
+
+        Outcomes.Clear();
+        DiffSummary.Clear();
+        ScannedCount = 0;
+        ChangedCount = 0;
+        FailedCount = 0;
+        AppliedCount = 0;
+        IsDiscovering = true;
+        StatusMessage = "Lese Datei-Tags …";
+
+        try
+        {
+            await foreach (var preview in _coordinator.DiscoverAsync(sourceDir, token).ConfigureAwait(true))
+            {
+                var vm = new TrackOutcomeViewModel(preview.File, preview.Existing, preview.ErrorMessage);
+                vm.HasSidecar = _coordinator.HasSidecar(preview.File.Path);
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    Outcomes.Add(vm);
+                });
+            }
+            StatusMessage = $"{Outcomes.Count} Datei(en) gefunden — bereit zum Scan.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Discovery abgebrochen.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Discovery failed");
+            StatusMessage = $"Discovery-Fehler: {ex.Message}";
+        }
+        finally
+        {
+            IsDiscovering = false;
+        }
     }
 
     /// <summary>
@@ -120,7 +190,7 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         StatusMessage = $"Vorschau aktualisiert ({Outcomes.Count} Zeilen, {DiffSummary.Count} mit Änderungen).";
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanScan))]
     private async Task ScanAsync()
     {
         if (string.IsNullOrWhiteSpace(SourceDirectory))
@@ -133,56 +203,99 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         _cts?.Cancel();
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
-        Outcomes.Clear();
+        var token = _cts.Token;
         DiffSummary.Clear();
         ScannedCount = 0;
         ChangedCount = 0;
         FailedCount = 0;
+        AppliedCount = 0;
         IsScanning = true;
         StatusMessage = "Scanne …";
 
+        // Reset every preview row to the empty status so prior CNG/OK/ERR badges from a previous
+        // scan don't bleed into this run. Pipeline outcomes will repaint them via UpdateFromOutcome.
+        foreach (var row in Outcomes) row.ResetStatus();
+
+        // Lookup table for outcome-matching. Keep separate from Outcomes because the pipeline
+        // emits in completion order (not discovery order), and we don't want O(N²) per-outcome.
+        var byPath = Outcomes.ToDictionary(r => r.Path, StringComparer.Ordinal);
+
+        async ValueTask OnFileStarted(TrackFile file)
+        {
+            // Invoked from worker threads — marshal to UI thread before touching VM state.
+            // Looking up byPath here (rather than outside the dispatch) keeps the dict access
+            // single-threaded.
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (byPath.TryGetValue(file.Path, out var row))
+                {
+                    row.BeginScan();
+                }
+            });
+        }
+
         try
         {
-            await foreach (var outcome in _coordinator.ScanAsync(SourceDirectory, cancellationToken: _cts.Token).ConfigureAwait(true))
+            await foreach (var outcome in _coordinator.ScanAsync(SourceDirectory, OnFileStarted, token).ConfigureAwait(true))
             {
-                // The reader is cheap (already in the cache for non-changed files via the same
-                // pipeline), and we need the pre-write tag values to render the diff column.
-                var existing = SafeRead(outcome.File.Path);
-                var vm = new TrackOutcomeViewModel(outcome, existing);
-
-                // Marshal back to the UI thread — ObservableCollection only allows mutation on the
-                // dispatcher thread. Without this, large parallel scans hit cross-thread asserts.
-                // DispatcherOperation doesn't expose ConfigureAwait; awaiting raw is fine here
-                // because the continuation already runs on the UI thread after Invoke completes.
-                // Seed HasSidecar so the Revert button is enabled out of the gate for any
-                // file whose previous Apply left a sidecar behind (incl. across scan runs).
-                vm.HasSidecar = _coordinator.HasSidecar(outcome.File.Path);
+                // The pipeline already read the existing tags during its Read stage and threaded
+                // them through on PipelineOutcome.ExistingAtScan — no need to re-read here.
+                var existing = outcome.ExistingAtScan ?? RayTagger.Core.Models.TrackTags.Empty;
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    Outcomes.Add(vm);
-                    ScannedCount = Outcomes.Count;
+                    if (byPath.TryGetValue(outcome.File.Path, out var row))
+                    {
+                        row.UpdateFromOutcome(outcome, existing);
+                        row.HasSidecar = _coordinator.HasSidecar(outcome.File.Path);
+                    }
+                    else
+                    {
+                        // Race: file appeared on disk after discovery enumerated. Add as a new
+                        // row so the user still sees it instead of silently dropping it.
+                        var vm = new TrackOutcomeViewModel(outcome, existing)
+                        {
+                            HasSidecar = _coordinator.HasSidecar(outcome.File.Path),
+                        };
+                        Outcomes.Add(vm);
+                        byPath[outcome.File.Path] = vm;
+                        row = vm;
+                    }
+
+                    // Bump scanned counter exactly once per outcome — regardless of OK/CNG/ERR.
+                    // Runs inside the UI-thread dispatch so the increment is implicitly serialized
+                    // across parallel pipeline workers (no Interlocked needed).
+                    ScannedCount++;
+
                     if (outcome.Status == PipelineStatus.Failed) FailedCount++;
                     // "Würde ändern" counts under the Änderungen banner too — dry-run scans
                     // never reach Written, so without this the user sees "0 Änderungen" every
                     // time despite the rule engine doing meaningful work.
-                    else if (vm.StatusLabel is "Geschrieben" or "Würde ändern") ChangedCount++;
+                    else if (row.StatusLabel is "Geschrieben" or "Würde ändern") ChangedCount++;
 
                     // Append-per-row keeps the side-panel populating incrementally during the
                     // scan instead of all-at-end. Full rebuilds happen only after operations
                     // that can flip diff state across multiple rows (Live-Preview, Apply, Revert).
-                    var diffs = RowDiffCollector.Collect(vm);
+                    var diffs = RowDiffCollector.Collect(row);
                     if (diffs.Count > 0)
                     {
-                        DiffSummary.Add(new RowDiffSummary(vm, diffs));
+                        DiffSummary.Add(new RowDiffSummary(row, diffs));
                     }
                 });
             }
-            StatusMessage = $"Fertig: {ScannedCount} Dateien, {ChangedCount} Änderungen vorgeschlagen, {FailedCount} Fehler.";
+            StatusMessage = $"Fertig: {Outcomes.Count} Dateien, {ChangedCount} Änderungen vorgeschlagen, {FailedCount} Fehler.";
         }
         catch (OperationCanceledException)
         {
             StatusMessage = "Scan abgebrochen.";
+            // Roll any row stuck on SCN back to the empty state — they didn't actually finish.
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                foreach (var row in Outcomes)
+                {
+                    if (row.StatusLabel == "Scannen") row.ResetStatus();
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -358,10 +471,18 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     private bool CanApplyAllChanged() => !IsBusy && Outcomes.Any(o => o.CanApply);
 
     /// <summary>
-    /// Disposes the last <see cref="CancellationTokenSource"/> the scan command allocated. The
-    /// VM itself is registered as Transient but held by <c>MainWindowViewModel</c> for the
-    /// window's lifetime — releasing the CTS on window-close prevents a handle leak when the
-    /// app loops (e.g. preview-driven multi-run workflows).
+    /// Scan can only fire once Discovery has settled — running both in parallel against the same
+    /// Outcomes list would race in match-by-path. Re-scanning while a previous scan is running
+    /// is also blocked (returns early from <see cref="ScanAsync"/> anyway, but this disables the
+    /// button so the user sees the state).
+    /// </summary>
+    private bool CanScan() => !IsScanning && !IsDiscovering && !IsApplying;
+
+    /// <summary>
+    /// Disposes both CancellationTokenSources the VM allocated. The VM itself is registered as
+    /// Transient but held by <c>MainWindowViewModel</c> for the window's lifetime — releasing the
+    /// CTS on window-close prevents a handle leak when the app loops (e.g. preview-driven
+    /// multi-run workflows).
     /// </summary>
     public void Dispose()
     {
@@ -369,6 +490,9 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         _cts?.Cancel();
         _cts?.Dispose();
         _cts = null;
+        _discoveryCts?.Cancel();
+        _discoveryCts?.Dispose();
+        _discoveryCts = null;
         _disposed = true;
     }
 

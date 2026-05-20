@@ -14,5 +14,6 @@
     <Project Path="tests/RayTagger.Core.Tests/RayTagger.Core.Tests.csproj" />
     <Project Path="tests/RayTagger.Lookup.Tests/RayTagger.Lookup.Tests.csproj" />
     <Project Path="tests/RayTagger.Metadata.Tests/RayTagger.Metadata.Tests.csproj" />
+    <Project Path="tests/RayTagger.Ui.Tests/RayTagger.Ui.Tests.csproj" />
   </Folder>
 </Solution>

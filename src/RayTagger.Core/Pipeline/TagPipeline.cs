@@ -76,6 +76,7 @@ public sealed class TagPipeline : ITagPipeline
     public async IAsyncEnumerable<PipelineOutcome> RunAsync(
         TaggerOptions options,
         MappingRuleSet rules,
+        Func<TrackFile, ValueTask>? onFileStarted = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -91,12 +92,13 @@ public sealed class TagPipeline : ITagPipeline
             await foreach (var file in _discovery.EnumerateAsync(options.Scan, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                await InvokeFileStartedSafelyAsync(onFileStarted, file).ConfigureAwait(false);
                 yield return await ProcessFileAsync(file, options, rules, cancellationToken).ConfigureAwait(false);
             }
             yield break;
         }
 
-        await foreach (var outcome in RunParallelAsync(options, rules, parallelism, cancellationToken).ConfigureAwait(false))
+        await foreach (var outcome in RunParallelAsync(options, rules, parallelism, onFileStarted, cancellationToken).ConfigureAwait(false))
         {
             yield return outcome;
         }
@@ -119,6 +121,7 @@ public sealed class TagPipeline : ITagPipeline
         TaggerOptions options,
         MappingRuleSet rules,
         int parallelism,
+        Func<TrackFile, ValueTask>? onFileStarted,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var workChannel = Channel.CreateBounded<TrackFile>(new BoundedChannelOptions(parallelism * 4)
@@ -152,6 +155,10 @@ public sealed class TagPipeline : ITagPipeline
         {
             await foreach (var file in workChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
+                // OnFileStarted fires exactly once per file, right before ProcessFileAsync begins.
+                // Lets the UI flip the row to "Scannen" / SCN-badge so the user can see which
+                // tracks the worker pool is actively chewing on.
+                await InvokeFileStartedSafelyAsync(onFileStarted, file).ConfigureAwait(false);
                 var outcome = await ProcessFileAsync(file, options, rules, cancellationToken).ConfigureAwait(false);
                 await outputChannel.Writer.WriteAsync(outcome, cancellationToken).ConfigureAwait(false);
             }
@@ -312,4 +319,23 @@ public sealed class TagPipeline : ITagPipeline
     /// </summary>
     private static bool ShouldIsolate(Exception ex) =>
         ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException;
+
+    /// <summary>
+    /// Invokes the optional <paramref name="onFileStarted"/> callback with the same isolation we
+    /// apply to <see cref="ProcessFileAsync"/>: a buggy UI callback must not bring a worker down
+    /// and starve the rest of the channel. Cancellation propagates so a Cancel-button click still
+    /// stops the pipeline cleanly.
+    /// </summary>
+    private async ValueTask InvokeFileStartedSafelyAsync(Func<TrackFile, ValueTask>? onFileStarted, TrackFile file)
+    {
+        if (onFileStarted is null) return;
+        try
+        {
+            await onFileStarted(file).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ShouldIsolate(ex))
+        {
+            _logger.LogWarning(ex, "OnFileStarted callback failed for {Path}", file.Path);
+        }
+    }
 }

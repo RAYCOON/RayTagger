@@ -187,7 +187,7 @@
                         <DataGridTextColumn Header="Album" Width="180" Binding="{Binding Album}"/>
                         <DataGridTextColumn Header="Länge" Width="70" Binding="{Binding LengthDisplay}"/>
                         <DataGridTextColumn Header="Größe" Width="80" Binding="{Binding SizeDisplay}"/>
-                        <DataGridTextColumn Header="Geändert" Width="85" Binding="{Binding ModifiedDisplay}"/>
+                        <DataGridTextColumn Header="Geändert" Width="115" Binding="{Binding ModifiedDisplay}"/>
                         <!-- Rule popup: small button per row → modal listing every fired rule.
                              Replaces the previous comma-joined cell that truncated on long chains. -->
                         <DataGridTemplateColumn Header="Regeln" Width="80">

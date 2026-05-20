@@ -82,7 +82,7 @@ internal static class ScanHandler
 
         try
         {
-            await foreach (var outcome in pipeline.RunAsync(options, rules, cancellationToken).ConfigureAwait(false))
+            await foreach (var outcome in pipeline.RunAsync(options, rules, cancellationToken: cancellationToken).ConfigureAwait(false))
             {
                 renderer.Add(outcome);
             }
