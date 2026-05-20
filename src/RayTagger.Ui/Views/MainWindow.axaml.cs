@@ -12,9 +12,46 @@ namespace RayTagger.Ui.Views;
 /// </summary>
 public partial class MainWindow : Window
 {
+    private MainWindowViewModel? _subscribedVm;
+
     public MainWindow()
     {
         InitializeComponent();
+        DataContextChanged += OnDataContextChanged;
+    }
+
+    /// <summary>
+    /// Subscribes to the VM's <see cref="MainWindowViewModel.JumpToRowRequested"/> event when the
+    /// DataContext arrives (the VM is injected via DI after construction). Unsubscribes from any
+    /// prior VM to keep this safe if the context ever swaps — in practice it's set once for the
+    /// window's lifetime, but the defensive unsubscribe costs nothing.
+    /// </summary>
+    private void OnDataContextChanged(object? sender, System.EventArgs e)
+    {
+        if (_subscribedVm is not null)
+        {
+            _subscribedVm.JumpToRowRequested -= OnJumpToRowRequested;
+            _subscribedVm = null;
+        }
+        if (DataContext is MainWindowViewModel vm)
+        {
+            vm.JumpToRowRequested += OnJumpToRowRequested;
+            _subscribedVm = vm;
+        }
+    }
+
+    /// <summary>
+    /// Switches the tab control back to the Scan tab (index 0) and brings the requested row into
+    /// view + selection. Called from the Rule Editor's diff side-panel — the user wants to verify
+    /// what the rules did to a specific file without leaving keyboard-navigation distance.
+    /// </summary>
+    private void OnJumpToRowRequested(object? sender, JumpToRowEventArgs e)
+    {
+        // Tab index 0 = "Scan-Ergebnisse" — keep this in sync with the XAML order if you ever
+        // reorder the tabs.
+        RootTabs.SelectedIndex = 0;
+        ResultsGrid.ScrollIntoView(e.Row, column: null);
+        ResultsGrid.SelectedItem = e.Row;
     }
 
     private async void OnPickFolderClick(object? sender, RoutedEventArgs e)

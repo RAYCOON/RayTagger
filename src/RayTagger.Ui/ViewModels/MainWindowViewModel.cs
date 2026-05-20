@@ -42,6 +42,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Raised when the user clicks a row in the Rule Editor's diff side-panel. The
+    /// <see cref="Views.MainWindow"/> code-behind subscribes and handles the actual
+    /// tab-switch + grid-scroll because those interactions need <see cref="TabControl"/> and
+    /// <see cref="Avalonia.Controls.DataGrid"/> references the VM shouldn't own.
+    /// </summary>
+    public event EventHandler<JumpToRowEventArgs>? JumpToRowRequested;
+
+    [RelayCommand]
+    private void JumpToRow(TrackOutcomeViewModel? row)
+    {
+        if (row is null) return;
+        JumpToRowRequested?.Invoke(this, new JumpToRowEventArgs(row));
+    }
+
+    /// <summary>
     /// Opens the platform folder picker (Avalonia routes to Cocoa/WinUI/Gtk per host). Selected
     /// path becomes the scan source. Bound to a button click via x:Static reference to the
     /// command name; the View injects its own <see cref="TopLevel"/> when invoking.
@@ -63,4 +78,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
             _logger.LogInformation("Source folder selected: {Path}", localPath);
         }
     }
+}
+
+/// <summary>EventArgs payload for <see cref="MainWindowViewModel.JumpToRowRequested"/> — wraps the
+/// row VM so CA1003's EventArgs-derived T constraint is satisfied.</summary>
+public sealed class JumpToRowEventArgs(TrackOutcomeViewModel row) : EventArgs
+{
+    public TrackOutcomeViewModel Row { get; } = row ?? throw new ArgumentNullException(nameof(row));
 }

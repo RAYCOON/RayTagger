@@ -58,6 +58,13 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<TrackOutcomeViewModel> Outcomes { get; } = [];
 
+    /// <summary>
+    /// Flat list of every row whose proposed tags differ from disk. Bound by the Rule Editor's
+    /// side-panel for the "where exactly do my changes apply" view. Rebuilt after every scan-row
+    /// add, after a Live-Preview rule edit, and after Apply/Revert flips a row's diff state.
+    /// </summary>
+    public ObservableCollection<RowDiffSummary> DiffSummary { get; } = [];
+
     public ScanViewModel(ScanCoordinator coordinator, ITagReader reader, IMappingRuleEngine ruleEngine, ILogger<ScanViewModel> logger)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -109,7 +116,8 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
             }
         }
 
-        StatusMessage = $"Vorschau aktualisiert ({Outcomes.Count} Zeilen).";
+        RowDiffCollector.Rebuild(DiffSummary, Outcomes);
+        StatusMessage = $"Vorschau aktualisiert ({Outcomes.Count} Zeilen, {DiffSummary.Count} mit Änderungen).";
     }
 
     [RelayCommand]
@@ -126,6 +134,7 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
         Outcomes.Clear();
+        DiffSummary.Clear();
         ScannedCount = 0;
         ChangedCount = 0;
         FailedCount = 0;
@@ -158,6 +167,15 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
                     // never reach Written, so without this the user sees "0 Änderungen" every
                     // time despite the rule engine doing meaningful work.
                     else if (vm.StatusLabel is "Geschrieben" or "Würde ändern") ChangedCount++;
+
+                    // Append-per-row keeps the side-panel populating incrementally during the
+                    // scan instead of all-at-end. Full rebuilds happen only after operations
+                    // that can flip diff state across multiple rows (Live-Preview, Apply, Revert).
+                    var diffs = RowDiffCollector.Collect(vm);
+                    if (diffs.Count > 0)
+                    {
+                        DiffSummary.Add(new RowDiffSummary(vm, diffs));
+                    }
                 });
             }
             StatusMessage = $"Fertig: {ScannedCount} Dateien, {ChangedCount} Änderungen vorgeschlagen, {FailedCount} Fehler.";
@@ -202,6 +220,8 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
                 // Apply just wrote a fresh sidecar — the Revert button should light up.
                 row.HasSidecar = true;
                 AppliedCount++;
+                // Existing-* now match Proposed-*, so this row's side-panel entry collapses.
+                RowDiffCollector.Rebuild(DiffSummary, Outcomes);
                 StatusMessage = $"Angewendet: {row.FileName} ({result.WrittenFields.Count} Felder).";
             }
             else
@@ -236,6 +256,8 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
             if (result.Success && result.RestoredSnapshot is not null)
             {
                 row.EndRevertSuccess(result.RestoredSnapshot);
+                // Revert flipped Existing-* to the restored values — diffs may have reshaped.
+                RowDiffCollector.Rebuild(DiffSummary, Outcomes);
                 StatusMessage = $"Wiederhergestellt: {row.FileName} ({result.WrittenFields.Count} Felder).";
             }
             else if (result.Success)
@@ -321,6 +343,8 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
 
             AppliedCount += applied;
             FailedCount += failed;
+            // Every successful row in the batch collapsed its diffs — refresh the side panel once.
+            RowDiffCollector.Rebuild(DiffSummary, Outcomes);
             StatusMessage = _cts.Token.IsCancellationRequested
                 ? $"Abgebrochen nach {applied} angewendet, {failed} fehlgeschlagen."
                 : $"Fertig: {applied} angewendet, {failed} fehlgeschlagen.";

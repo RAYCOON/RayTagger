@@ -29,15 +29,93 @@
             </StackPanel>
         </Border>
 
-        <!-- Code editor — AvaloniaEdit. Text two-way sync happens in code-behind because the
-             native Text property is a CLR property, not a styled property, and doesn't bind. -->
-        <ae:TextEditor Grid.Row="1"
-                       Name="Editor"
-                       FontFamily="Menlo,Consolas,monospace"
-                       FontSize="13"
-                       ShowLineNumbers="True"
-                       HorizontalScrollBarVisibility="Auto"
-                       VerticalScrollBarVisibility="Auto"/>
+        <!-- Editor + diff side-panel. GridSplitter lets the user tune the panel width per their
+             monitor without us picking an arbitrary default that's wrong on every screen. -->
+        <Grid Grid.Row="1" ColumnDefinitions="*,5,320">
+
+            <!-- Code editor — AvaloniaEdit. Text two-way sync happens in code-behind because the
+                 native Text property is a CLR property, not a styled property, and doesn't bind. -->
+            <ae:TextEditor Grid.Column="0"
+                           Name="Editor"
+                           FontFamily="Menlo,Consolas,monospace"
+                           FontSize="13"
+                           ShowLineNumbers="True"
+                           HorizontalScrollBarVisibility="Auto"
+                           VerticalScrollBarVisibility="Auto"/>
+
+            <GridSplitter Grid.Column="1"
+                          Background="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                          ResizeDirection="Columns"
+                          ShowsPreview="False"/>
+
+            <!-- Diff side-panel. Bound to ScanViewModel.DiffSummary via the parent window's VM
+                 (the RuleEditor's own DataContext doesn't see the scan state). Empty = invisible
+                 prompt so the user knows what the panel does before the first scan runs. -->
+            <Border Grid.Column="2"
+                    BorderThickness="1,0,0,0"
+                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                    Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+                <Grid RowDefinitions="Auto,*">
+                    <Border Grid.Row="0"
+                            Padding="10,6"
+                            BorderThickness="0,0,0,1"
+                            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                        <TextBlock FontWeight="SemiBold">
+                            <Run Text="Vorschau-Änderungen"/>
+                            <Run Text=" ("/>
+                            <Run Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.DiffSummary.Count, FallbackValue=0}"/>
+                            <Run Text=")"/>
+                        </TextBlock>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="1" Padding="6">
+                        <ItemsControl ItemsSource="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.DiffSummary}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:RowDiffSummary">
+                                    <Border Margin="0,2,0,4"
+                                            Padding="8,6"
+                                            CornerRadius="4"
+                                            Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                                            BorderThickness="1"
+                                            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+                                        <StackPanel Spacing="3">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding FileName}"
+                                                           FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip.Tip="{Binding FileName}"/>
+                                                <Button Grid.Column="1"
+                                                        Content="Springen"
+                                                        Padding="6,1"
+                                                        FontSize="11"
+                                                        Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).JumpToRowCommand}"
+                                                        CommandParameter="{Binding Row}"
+                                                        ToolTip.Tip="Wechselt zum Scan-Tab und scrollt zu dieser Zeile."/>
+                                            </Grid>
+                                            <ItemsControl ItemsSource="{Binding Diffs}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:FieldDiff">
+                                                        <TextBlock Margin="0,1,0,0" FontSize="12">
+                                                            <Run Text="{Binding Field}" FontWeight="SemiBold"/>
+                                                            <Run Text=": "/>
+                                                            <Run Text="{Binding OldValue, FallbackValue='—', TargetNullValue='—'}"
+                                                                 Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                                                            <Run Text=" → "/>
+                                                            <Run Text="{Binding NewValue, FallbackValue='—', TargetNullValue='—'}"/>
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
 
         <!-- Status banner — wraps so long error text doesn't blow up the layout. -->
         <Border Grid.Row="2"

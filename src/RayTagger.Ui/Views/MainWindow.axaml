@@ -15,7 +15,7 @@
          can't resolve. The Avalonia previewer renders against an empty DataContext, which is
          fine for layout work. -->
 
-    <TabControl TabStripPlacement="Top" SelectionChanged="OnTabSelectionChanged">
+    <TabControl Name="RootTabs" TabStripPlacement="Top" SelectionChanged="OnTabSelectionChanged">
 
         <!-- =============== Scan + Apply ============================================= -->
         <TabItem Header="Scan-Ergebnisse">
