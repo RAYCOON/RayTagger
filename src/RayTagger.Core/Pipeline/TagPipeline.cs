@@ -219,6 +219,7 @@ public sealed class TagPipeline : ITagPipeline
             // Continue with whatever existing tags we have — analysis is best-effort.
         }
 
+
         LookupResult? lookup = null;
         try
         {
@@ -290,6 +291,29 @@ public sealed class TagPipeline : ITagPipeline
             errors.Add(new StageError("Sort", ex.Message));
         }
 
+        // BPM snap: clean up near-integer BPM values uniformly across all sources (existing tags
+        // like "126.01", analyzer noise like "122.07", rule-doubled results). Runs LAST so it
+        // sees the final value the user/writer would see. Snapped values promote to
+        // TagFieldSource.Rules so the writer treats them as user-declared intent and overwrites
+        // the existing tag — otherwise skip_if_present would silently preserve "126.01" on disk
+        // while the UI showed the rounded "126".
+        var bpmWasSnapped = false;
+        if (resolved.Bpm.Value is double finalBpm)
+        {
+            var snapped = RayTagger.Core.Analysis.BpmSnapper.Snap(
+                finalBpm,
+                options.Analysis.Bpm.SnapTolerancePercent,
+                options.Analysis.Bpm.SnapStep,
+                out bpmWasSnapped);
+            if (bpmWasSnapped)
+            {
+                resolved = resolved with
+                {
+                    Bpm = new ResolvedValueField<double>(snapped, TagFieldSource.Rules, resolved.Bpm.Confidence),
+                };
+            }
+        }
+
         return new PipelineOutcome(
             file,
             resolved,
@@ -298,7 +322,8 @@ public sealed class TagPipeline : ITagPipeline
             Status: status,
             Errors: errors,
             PreMapResolved: preMapResolved,
-            ExistingAtScan: existing);
+            ExistingAtScan: existing,
+            BpmWasSnapped: bpmWasSnapped);
     }
 
     private static bool HasAnyNonExistingField(ResolvedTrackTags resolved) =>

@@ -39,6 +39,11 @@ public sealed record MappingRuleHit(string RuleName, IReadOnlyList<string> Chang
 /// predicates that look at the original artist / path (the resolved view loses provenance). Null
 /// when the read failed.
 /// </param>
+/// <param name="BpmWasSnapped">
+/// True when the BPM analyzer produced a non-integer value that fell within the configured
+/// <c>analysis.bpm.snap_tolerance_percent</c> tolerance and got rounded to an integer. Drives the
+/// UI's dark-red highlight so the user can see which BPMs are "corrected" rather than verbatim.
+/// </param>
 public sealed record PipelineOutcome(
     TrackFile File,
     ResolvedTrackTags Resolved,
@@ -47,4 +52,5 @@ public sealed record PipelineOutcome(
     PipelineStatus Status,
     IReadOnlyList<StageError> Errors,
     ResolvedTrackTags? PreMapResolved = null,
-    TrackTags? ExistingAtScan = null);
+    TrackTags? ExistingAtScan = null,
+    bool BpmWasSnapped = false);

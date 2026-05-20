@@ -111,7 +111,7 @@ public sealed class ReadOptions
 
 public sealed class AnalysisOptions
 {
-    public AnalyzerOptions Bpm { get; set; } = new() { Provider = "essentia", MinConfidence = 0.4 };
+    public BpmAnalyzerOptions Bpm { get; set; } = new() { Provider = "essentia", MinConfidence = 0.4 };
     public KeyAnalyzerOptions Key { get; set; } = new() { Provider = "essentia", MinConfidence = 0.55 };
     public EnergyAnalyzerOptions Energy { get; set; } = new() { Provider = "essentia", MinConfidence = 0.5 };
     public AnalyzerOptions Fingerprint { get; set; } = new() { Provider = "chromaprint", MinConfidence = 0.0 };
@@ -140,6 +140,28 @@ public sealed class KeyAnalyzerOptions : AnalyzerOptions
 {
     /// <summary>CLI/log display only — TKEY and TXXX:CAMELOTKEY are always written in their canonical notation.</summary>
     public KeyDisplayNotation DisplayNotation { get; set; } = KeyDisplayNotation.Camelot;
+}
+
+/// <summary>
+/// BPM analyzer settings — extends the base <see cref="AnalyzerOptions"/> with a snap-to-grid
+/// post-processing step that rounds noise-floor decimal output (e.g. Essentia's 122.07) to the
+/// nearest multiple of <see cref="SnapStep"/> when within the configured tolerance.
+/// </summary>
+public sealed class BpmAnalyzerOptions : AnalyzerOptions
+{
+    /// <summary>
+    /// Maximum allowed percentage drift from the nearest <see cref="SnapStep"/> grid point for
+    /// the snap to fire. <c>0.12</c> catches Essentia's typical noise-floor drift (e.g. 122.07 →
+    /// 122 at 0.057% drift) but leaves genuinely fractional results alone. Set <c>0</c> to disable.
+    /// </summary>
+    public double SnapTolerancePercent { get; set; } = 0.12;
+
+    /// <summary>
+    /// Grid granularity in BPM. <c>1.0</c> snaps to whole integers; <c>0.5</c> (default) also
+    /// catches half-integer values — e.g. 173.48 → 173.5 (drift 0.012%) where step=1 would have
+    /// left it alone (drift to 173 = 0.28%, above any reasonable tolerance). Must be &gt; 0.
+    /// </summary>
+    public double SnapStep { get; set; } = 0.5;
 }
 
 public sealed class EnergyAnalyzerOptions : AnalyzerOptions

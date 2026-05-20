@@ -55,6 +55,12 @@ analysis:
     provider: essentia               # only essentia is supported
     timeout_seconds: 60
     min_confidence: 0.4              # bpm_histogram_first_peak_weight proxy
+    # Snap BPM to the nearest multiple of `snap_step` when within `snap_tolerance_percent`
+    # drift. Applied to the final resolved BPM (existing tag OR analyzer output) so values
+    # like a disk "126.01" or Essentia's "122.07" both end up on the grid the user sees.
+    # snap_step 0.5 also catches half-BPM tracks (173.48 → 173.5); use 1.0 for integer-only.
+    snap_tolerance_percent: 0.12
+    snap_step: 0.5
   key:
     enabled: true
     provider: essentia               # uses tonal.key_edma (EDM-trained profile)

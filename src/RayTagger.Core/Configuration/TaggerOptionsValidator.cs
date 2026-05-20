@@ -73,6 +73,18 @@ internal static class TaggerOptionsValidator
         // DisplayNotation is now an enum; YamlDotNet rejects unknown values at deserialization
         // time, so no string-based validation is needed here.
         ValidateAnalyzer(analysis.Bpm, "analysis.bpm", errors);
+        if (analysis.Bpm.SnapTolerancePercent < 0)
+        {
+            errors.Add(new ConfigurationError(
+                "analysis.bpm.snap_tolerance_percent",
+                $"Must be >= 0 (got {analysis.Bpm.SnapTolerancePercent}). 0 disables snapping."));
+        }
+        if (analysis.Bpm.SnapStep <= 0)
+        {
+            errors.Add(new ConfigurationError(
+                "analysis.bpm.snap_step",
+                $"Must be > 0 (got {analysis.Bpm.SnapStep}). 1.0 = integer snap, 0.5 = half-BPM snap."));
+        }
         ValidateAnalyzer(analysis.Key, "analysis.key", errors);
         ValidateAnalyzer(analysis.Energy, "analysis.energy", errors);
         ValidateAnalyzer(analysis.Fingerprint, "analysis.fingerprint", errors);

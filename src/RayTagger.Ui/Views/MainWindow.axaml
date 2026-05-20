@@ -139,7 +139,12 @@
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasBpmDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
-                                        <TextBlock Text="{Binding BpmDisplay}" VerticalAlignment="Center"/>
+                                        <!-- Foreground turns dark red when the analyzer's snap-to-integer
+                                             rounded the raw BPM (e.g. 122.07 → 122). Null brush in the
+                                             default case lets the row inherit the theme's foreground. -->
+                                        <TextBlock Text="{Binding BpmDisplay}"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{Binding BpmWasSnapped, Converter={x:Static vm:SnapToBrushConverter.Instance}}"/>
                                     </Border>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>

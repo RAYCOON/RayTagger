@@ -83,7 +83,7 @@ public class TagMergerTests
 
     private static AnalysisOptions DefaultAnalysisConfig() => new()
     {
-        Bpm = new AnalyzerOptions { Provider = "aubio", MinConfidence = 0.6 },
+        Bpm = new BpmAnalyzerOptions { Provider = "aubio", MinConfidence = 0.6 },
         Key = new KeyAnalyzerOptions { Provider = "keyfinder-cli", MinConfidence = 0.55 },
         Energy = new EnergyAnalyzerOptions { Provider = "essentia", MinConfidence = 0.5 },
         Fingerprint = new AnalyzerOptions { Provider = "chromaprint", MinConfidence = 0.0 },

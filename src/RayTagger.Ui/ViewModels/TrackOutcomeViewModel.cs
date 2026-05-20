@@ -60,6 +60,13 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     private string? _proposedSetPosition;
     [ObservableProperty] private IReadOnlyList<string> _appliedRules = [];
     [ObservableProperty] private string? _destinationPath;
+
+    /// <summary>
+    /// True when the pipeline's BPM-snap post-step rounded the analyzer's output to an integer
+    /// (e.g. 122.07 → 122). Drives the BPM cell's dark-red foreground so the user can see which
+    /// values were corrected vs. emitted verbatim.
+    /// </summary>
+    [ObservableProperty] private bool _bpmWasSnapped;
     /// <summary>
     /// Per-stage error messages. Settable so <see cref="UpdateFromOutcome"/> can refresh the list
     /// when a preview row transitions into a scanned row (the original ctor's init-only assignment
@@ -270,6 +277,7 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ExistingSetPosition = existing.SetPosition;
 
         ApplyResolvedFromOutcome(outcome);
+        BpmWasSnapped = outcome.BpmWasSnapped;
         Errors = [.. outcome.Errors.Select(e => $"[{e.Stage}] {e.Message}")];
     }
 
@@ -352,6 +360,7 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ExistingSetPosition = existing.SetPosition;
 
         ApplyResolvedFromOutcome(outcome);
+        BpmWasSnapped = outcome.BpmWasSnapped;
     }
 
     /// <summary>Mark the row as "currently being scanned" — flips the badge to SCN.</summary>
