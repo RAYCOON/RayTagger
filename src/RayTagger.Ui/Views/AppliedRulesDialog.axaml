@@ -1,0 +1,58 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:RayTagger.Ui.ViewModels"
+        x:Class="RayTagger.Ui.Views.AppliedRulesDialog"
+        x:DataType="vm:TrackOutcomeViewModel"
+        Title="Angewendete Regeln"
+        Width="520" Height="380"
+        MinWidth="320" MinHeight="220"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+
+        <!-- File header. Same shape as the rule-test dialog so the two feel consistent. -->
+        <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="{Binding FileName}" FontSize="14" FontWeight="SemiBold"/>
+            <TextBlock Text="{Binding Path}"
+                       Opacity="0.6"
+                       FontSize="11"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding Path}"/>
+        </StackPanel>
+
+        <!-- Body. Either the list of fired rules or a "no rules matched" notice. -->
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <TextBlock Text="Keine Regel hat gegriffen."
+                       Opacity="0.6"
+                       FontStyle="Italic"
+                       VerticalAlignment="Top"
+                       IsVisible="{Binding !AppliedRules.Count}"/>
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          IsVisible="{Binding AppliedRules.Count}">
+                <ItemsControl ItemsSource="{Binding AppliedRules}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <Border Margin="0,2"
+                                    Padding="8,4"
+                                    CornerRadius="3"
+                                    Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap"/>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- Close button. Mirrors the rule-test dialog footer. -->
+        <StackPanel Grid.Row="2"
+                    Margin="0,12,0,0"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Content="Schließen"
+                    Classes="accent"
+                    MinWidth="100"
+                    Click="OnCloseClick"/>
+        </StackPanel>
+    </Grid>
+</Window>

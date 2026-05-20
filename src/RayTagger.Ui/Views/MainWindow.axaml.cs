@@ -89,6 +89,20 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Opens the modal applied-rules dialog for the clicked row. Lives here (not in the row VM)
+    /// because the dialog needs a <see cref="Window"/> owner reference, which the VM shouldn't
+    /// hold. Disabled-button case is already handled by IsEnabled on the button itself — this
+    /// method just guards against the rare case where the sender's DataContext is null.
+    /// </summary>
+    private async void OnRulesButtonClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: TrackOutcomeViewModel row })
+        {
+            await AppliedRulesDialog.ShowAsync(this, row);
+        }
+    }
+
+    /// <summary>
     /// Switching to the Regeln tab triggers a one-time auto-load of the mappings file the last
     /// scan picked up. Lives here (not in the view's AttachedToVisualTree) because TabControl
     /// instantiates its tab content eagerly — Attach fires before any scan has had a chance to

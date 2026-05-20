@@ -1,3 +1,4 @@
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using RayTagger.Core.Models;
 
@@ -31,24 +32,31 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     [ObservableProperty] private TagFieldSource _genreSource;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasGenreDiff))]
+    [NotifyPropertyChangedFor(nameof(GenreDisplay))]
     private string? _proposedGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSubGenreDiff))]
+    [NotifyPropertyChangedFor(nameof(SubGenreDisplay))]
     private string? _proposedSubGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasBpmDiff))]
+    [NotifyPropertyChangedFor(nameof(BpmDisplay))]
     private double? _proposedBpm;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasKeyDiff))]
+    [NotifyPropertyChangedFor(nameof(KeyDisplay))]
     private string? _proposedKey;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasEnergyDiff))]
+    [NotifyPropertyChangedFor(nameof(EnergyDisplay))]
     private int? _proposedEnergy;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasMoodDiff))]
+    [NotifyPropertyChangedFor(nameof(MoodDisplay))]
     private string? _proposedMood;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSetPositionDiff))]
+    [NotifyPropertyChangedFor(nameof(SetPositionDisplay))]
     private string? _proposedSetPosition;
     [ObservableProperty] private IReadOnlyList<string> _appliedRules = [];
     [ObservableProperty] private string? _destinationPath;
@@ -73,6 +81,7 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanApply))]
     [NotifyPropertyChangedFor(nameof(IsApplied))]
+    [NotifyPropertyChangedFor(nameof(StatusBadge))]
     private string _statusLabel = string.Empty;
 
     [ObservableProperty]
@@ -92,25 +101,130 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasGenreDiff))]
+    [NotifyPropertyChangedFor(nameof(GenreDisplay))]
     private string? _existingGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSubGenreDiff))]
+    [NotifyPropertyChangedFor(nameof(SubGenreDisplay))]
     private string? _existingSubGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasBpmDiff))]
+    [NotifyPropertyChangedFor(nameof(BpmDisplay))]
     private double? _existingBpm;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasKeyDiff))]
+    [NotifyPropertyChangedFor(nameof(KeyDisplay))]
     private string? _existingKey;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasEnergyDiff))]
+    [NotifyPropertyChangedFor(nameof(EnergyDisplay))]
     private int? _existingEnergy;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasMoodDiff))]
+    [NotifyPropertyChangedFor(nameof(MoodDisplay))]
     private string? _existingMood;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSetPositionDiff))]
+    [NotifyPropertyChangedFor(nameof(SetPositionDisplay))]
     private string? _existingSetPosition;
+
+    // Display strings used by the results grid. Show "current → new" only when the proposal
+    // actually differs from disk; otherwise just the current value so unchanged rows aren't
+    // visually noisy with redundant arrows. Empty / null values render as blank (rather than
+    // "—") so the column stays clean for tracks that legitimately have no value in this field.
+    public string GenreDisplay => FormatDiff(ExistingGenre, ProposedGenre, HasGenreDiff);
+    public string SubGenreDisplay => FormatDiff(ExistingSubGenre, ProposedSubGenre, HasSubGenreDiff);
+    public string BpmDisplay => FormatBpmDiff(ExistingBpm, ProposedBpm, HasBpmDiff);
+    public string KeyDisplay => FormatDiff(ExistingKey, ProposedKey, HasKeyDiff);
+    public string EnergyDisplay => FormatIntDiff(ExistingEnergy, ProposedEnergy, HasEnergyDiff);
+    public string MoodDisplay => FormatDiff(ExistingMood, ProposedMood, HasMoodDiff);
+    public string SetPositionDisplay => FormatDiff(ExistingSetPosition, ProposedSetPosition, HasSetPositionDiff);
+
+    // Display rules (apply to every dimension):
+    //   - No diff                 → just the existing value (or blank when it's null)
+    //   - Diff, existing empty    → just the proposed value (no leading "→ X" with empty prefix)
+    //   - Diff, both have a value → "existing → proposed"
+    // The empty-existing case matters: tracks without a prior BPM/key/etc. shouldn't render
+    // as " → Am" (whitespace, arrow, value) — it reads like an artifact rather than information.
+    private static string FormatDiff(string? existing, string? proposed, bool hasDiff)
+    {
+        if (!hasDiff) return existing ?? string.Empty;
+        if (string.IsNullOrEmpty(existing)) return proposed ?? string.Empty;
+        return $"{existing} → {proposed ?? string.Empty}";
+    }
+
+    private static string FormatBpmDiff(double? existing, double? proposed, bool hasDiff)
+    {
+        if (!hasDiff) return FormatBpm(existing);
+        var existingText = FormatBpm(existing);
+        var proposedText = FormatBpm(proposed);
+        if (existingText.Length == 0) return proposedText;
+        return $"{existingText} → {proposedText}";
+    }
+
+    private static string FormatBpm(double? value) =>
+        value is null ? string.Empty : value.Value.ToString("0.##", CultureInfo.CurrentCulture);
+
+    private static string FormatIntDiff(int? existing, int? proposed, bool hasDiff)
+    {
+        if (!hasDiff) return FormatInt(existing);
+        var existingText = FormatInt(existing);
+        var proposedText = FormatInt(proposed);
+        if (existingText.Length == 0) return proposedText;
+        return $"{existingText} → {proposedText}";
+    }
+
+    private static string FormatInt(int? value) =>
+        value is null ? string.Empty : value.Value.ToString(CultureInfo.CurrentCulture);
+
+    // Read-only metadata columns. These are frozen at scan time — the rule engine doesn't write
+    // Title/Artist/Album/Year, and file size / modified-time live in the filesystem, not in tags.
+    public string Title => ExistingAtScan?.Title ?? string.Empty;
+    public string Artist => ExistingAtScan?.Artist ?? string.Empty;
+    public string Album => ExistingAtScan?.Album ?? string.Empty;
+    public string Year => ExistingAtScan?.Year is { } y ? y.ToString(CultureInfo.CurrentCulture) : string.Empty;
+
+    /// <summary>Track length in <c>M:SS</c> form (or blank if duration is unknown).</summary>
+    public string LengthDisplay
+    {
+        get
+        {
+            var seconds = ExistingAtScan?.DurationSeconds;
+            if (seconds is null || seconds <= 0) return string.Empty;
+            var s = seconds.Value;
+            return $"{s / 60}:{(s % 60).ToString("D2", CultureInfo.InvariantCulture)}";
+        }
+    }
+
+    /// <summary>File size with locale-aware decimal — e.g. "12,4 MB" on German systems.</summary>
+    public string SizeDisplay => FormatSize(SourceOutcome.File.SizeBytes);
+
+    /// <summary>Last-modified date in <c>dd.MM.yy</c> form (German short date — matches the user's locale).</summary>
+    public string ModifiedDisplay =>
+        SourceOutcome.File.LastModifiedUtc.ToLocalTime().ToString("dd.MM.yy", CultureInfo.CurrentCulture);
+
+    /// <summary>
+    /// Short three-letter status pill. The full <see cref="StatusLabel"/> still drives the tooltip;
+    /// this just gives the leftmost column a fixed-width glyph the user can scan at a glance.
+    /// </summary>
+    public string StatusBadge => StatusLabel switch
+    {
+        "Würde ändern" => "CNG",
+        "Fehler" => "ERR",
+        _ => "OK",
+    };
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes <= 0) return string.Empty;
+        if (bytes < 1024) return $"{bytes} B";
+        var kb = bytes / 1024.0;
+        if (kb < 1024) return $"{kb.ToString("0.#", CultureInfo.CurrentCulture)} KB";
+        var mb = kb / 1024.0;
+        if (mb < 1024) return $"{mb.ToString("0.#", CultureInfo.CurrentCulture)} MB";
+        var gb = mb / 1024.0;
+        return $"{gb.ToString("0.##", CultureInfo.CurrentCulture)} GB";
+    }
 
     /// <summary>True iff this row has a pending change the user can apply.</summary>
     public bool CanApply => !IsApplying && !IsReverting && StatusLabel == "Würde ändern";
