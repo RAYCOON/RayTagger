@@ -80,8 +80,17 @@
                           CanUserResizeColumns="True"
                           AutoGenerateColumns="False"
                           IsReadOnly="True"
-                          GridLinesVisibility="Horizontal"
-                          RowHeight="32">
+                          GridLinesVisibility="Vertical"
+                          RowHeight="22"
+                          FontSize="6">
+                    <DataGrid.Styles>
+                        <Style Selector="DataGridRow:nth-child(2n)">
+                            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"/>
+                        </Style>
+                        <Style Selector="DataGridCell">
+                            <Setter Property="Padding" Value="0,1"/>
+                        </Style>
+                    </DataGrid.Styles>
                     <DataGrid.Columns>
                         <!-- Status badge: 3-letter pill (OK / CNG / ERR) instead of a full word.
                              The full StatusLabel still shows in the tooltip for screen readers. -->
@@ -108,7 +117,7 @@
                         <DataGridTemplateColumn Header="Genre" Width="180">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
-                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                    <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasGenreDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
                                         <TextBlock Text="{Binding GenreDisplay}" VerticalAlignment="Center"/>
                                     </Border>
@@ -118,7 +127,7 @@
                         <DataGridTemplateColumn Header="SubGenre" Width="120">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
-                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                    <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasSubGenreDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
                                         <TextBlock Text="{Binding SubGenreDisplay}" VerticalAlignment="Center"/>
                                     </Border>
@@ -128,7 +137,7 @@
                         <DataGridTemplateColumn Header="BPM" Width="100">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
-                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                    <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasBpmDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
                                         <TextBlock Text="{Binding BpmDisplay}" VerticalAlignment="Center"/>
                                     </Border>
@@ -138,7 +147,7 @@
                         <DataGridTemplateColumn Header="Key" Width="80">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
-                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                    <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasKeyDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
                                         <TextBlock Text="{Binding KeyDisplay}" VerticalAlignment="Center"/>
                                     </Border>
@@ -148,7 +157,7 @@
                         <DataGridTemplateColumn Header="Energy" Width="80">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
-                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                    <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasEnergyDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
                                         <TextBlock Text="{Binding EnergyDisplay}" VerticalAlignment="Center"/>
                                     </Border>
@@ -158,7 +167,7 @@
                         <DataGridTemplateColumn Header="Mood" Width="120">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
-                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                    <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasMoodDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
                                         <TextBlock Text="{Binding MoodDisplay}" VerticalAlignment="Center"/>
                                     </Border>
@@ -168,7 +177,7 @@
                         <DataGridTemplateColumn Header="Set Time" Width="120">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
-                                    <Border Padding="6,2" VerticalAlignment="Stretch"
+                                    <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasSetPositionDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
                                         <TextBlock Text="{Binding SetPositionDisplay}" VerticalAlignment="Center"/>
                                     </Border>
