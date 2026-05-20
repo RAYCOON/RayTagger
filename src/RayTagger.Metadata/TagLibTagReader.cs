@@ -84,7 +84,29 @@ public sealed class TagLibTagReader : ITagReader
                 ? VorbisCommentAccessor.GetField(xiph, TaggerTxxxFrames.SetPosition)
                 : null;
 
-        var musicalKey = KeyNotationConverter.FromEither(common.InitialKey, camelot);
+        // Standard-notation key. TagLib# Tag.InitialKey only maps to Vorbis INITIALKEY (canonical),
+        // but plenty of FLAC writers (Mixed In Key, Mp3Tag's default) emit just KEY. Read both
+        // and prefer the standard name when present.
+        var standardKeyText = id3 is not null
+            ? Id3v2FrameAccessor.GetText(id3, "TKEY")
+            : xiph is not null
+                ? VorbisCommentAccessor.GetField(xiph, "INITIALKEY") ?? VorbisCommentAccessor.GetField(xiph, "KEY")
+                : null;
+        // Fallback to common.InitialKey for formats this code doesn't special-case (rare; here
+        // mostly for forward compatibility).
+        standardKeyText ??= NullIfEmpty(common.InitialKey);
+        var musicalKey = KeyNotationConverter.FromEither(standardKeyText, camelot);
+
+        // BPM. Same story as the key: TagLib#'s Tag.BeatsPerMinute is a uint that mis-parses
+        // decimal BPM strings ("140.00" → 14000). Read the raw frame string and parse with
+        // InvariantCulture so "140.00" / "94.92" / "173.4819" all come back correct.
+        var bpmText = id3 is not null
+            ? Id3v2FrameAccessor.GetText(id3, "TBPM")
+            : xiph is not null
+                ? VorbisCommentAccessor.GetField(xiph, "BPM")
+                : null;
+        var bpm = ParseBpm(bpmText)
+            ?? (common.BeatsPerMinute > 0 ? (double?)common.BeatsPerMinute : null);
 
         // TagLib# exposes container-decoded duration on Properties (null if the file is corrupt
         // or the codec wasn't recognised). AcoustID's lookup endpoint refuses to answer without
@@ -102,7 +124,7 @@ public sealed class TagLibTagReader : ITagReader
             Year: common.Year > 0 ? (int)common.Year : null,
             Genre: NullIfEmpty(common.FirstGenre),
             SubGenre: NullIfEmpty(subGenre),
-            Bpm: common.BeatsPerMinute > 0 ? common.BeatsPerMinute : null,
+            Bpm: bpm,
             Key: musicalKey,
             Energy: ParseEnergy(energyText),
             Mood: NullIfEmpty(mood),
@@ -120,6 +142,30 @@ public sealed class TagLibTagReader : ITagReader
         return int.TryParse(text.Trim(), System.Globalization.NumberStyles.Integer,
                             System.Globalization.CultureInfo.InvariantCulture, out var n) &&
                n is >= 1 and <= 10
+            ? n
+            : null;
+    }
+
+    /// <summary>
+    /// Parses a raw BPM string (TBPM frame value or Vorbis BPM field) with InvariantCulture so
+    /// "140.00", "94.92" and "173.4819" all round-trip correctly. Returns null for blanks, junk,
+    /// zero, or negative values — the caller falls back to TagLib#'s uint getter only when the
+    /// raw frame is absent.
+    /// </summary>
+    /// <remarks>
+    /// Exposed as internal (not private) so the test suite can pin the regression:
+    /// TagLib#'s <c>Tag.BeatsPerMinute</c> getter mis-reads "140.00" as 14000, and we have to
+    /// guarantee our replacement keeps doing the right thing across future TagLib# versions.
+    /// </remarks>
+    internal static double? ParseBpm(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        // NumberStyles.Float = Integer | DecimalPoint | Exponent + leading/trailing white + sign.
+        // Deliberately NO thousands separator: "140.00" must stay 140.0, not become 14000 — which
+        // is exactly the bug we're working around in TagLib# itself.
+        return double.TryParse(text.Trim(), System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out var n)
+               && n > 0
             ? n
             : null;
     }

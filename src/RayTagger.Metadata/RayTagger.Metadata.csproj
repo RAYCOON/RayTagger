@@ -13,4 +13,8 @@
     <ProjectReference Include="..\RayTagger.Core\RayTagger.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="RayTagger.Metadata.Tests" />
+  </ItemGroup>
+
 </Project>

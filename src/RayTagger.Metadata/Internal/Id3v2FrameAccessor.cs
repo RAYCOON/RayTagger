@@ -26,6 +26,25 @@ internal static class Id3v2FrameAccessor
         return null;
     }
 
+    /// <summary>
+    /// Reads a standard ID3v2 text frame (TBPM, TKEY, TCON, …) as its raw string value. Used by
+    /// the reader to bypass TagLib#'s built-in numeric parsers — its <c>Tag.BeatsPerMinute</c>
+    /// getter, for example, mis-parses a TBPM frame like <c>"140.00"</c> as <c>14000</c>.
+    /// </summary>
+    public static string? GetText(Tag id3, string frameId)
+    {
+        ArgumentNullException.ThrowIfNull(id3);
+        ArgumentException.ThrowIfNullOrWhiteSpace(frameId);
+
+        var frame = TextInformationFrame.Get(id3, frameId, create: false);
+        var text = frame?.Text;
+        if (text is { Length: > 0 } && !string.IsNullOrWhiteSpace(text[0]))
+        {
+            return text[0];
+        }
+        return null;
+    }
+
     /// <summary>Enumerates every <c>TXXX</c> description/value pair on the tag.</summary>
     public static IEnumerable<KeyValuePair<string, string>> EnumerateUserText(Tag id3)
     {
