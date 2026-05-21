@@ -131,7 +131,9 @@ public sealed class ScanCoordinator
         // independent of when (or whether) the user switches to the Regeln tab.
         OptionsLoaded?.Invoke(this, EventArgs.Empty);
 
-        var built = await _pipelineFactory.BuildAsync(options, _statusReporter, cancellationToken).ConfigureAwait(false);
+        // `using` so the Essentia profile-file cache (transient YAMLs in /tmp) gets cleaned up
+        // even if the caller breaks out of the async-enumerable early.
+        using var built = await _pipelineFactory.BuildAsync(options, _statusReporter, cancellationToken).ConfigureAwait(false);
 
         var pipeline = new TagPipeline(
             _discovery,

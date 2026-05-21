@@ -224,4 +224,102 @@ public class TagPipelineTests
         outcomes.Where(o => o.Status == PipelineStatus.Failed)
             .Should().AllSatisfy(o => o.File.Path.Should().Contain("f5"));
     }
+
+    [Fact]
+    public async Task Analyzer_forced_fallback_flows_to_outcome_only_when_analysis_supplied_the_final_value()
+    {
+        // Analyzer reports IsForcedFallback=true with raw=105 (e.g. genre range [130,200],
+        // fold ×2 → 210 → still OOR → fallback). With no existing BPM on the file, the
+        // analyzer's value passes the merge → outcome carries BpmIsForcedFallback=true.
+        var file = MakeTrackFile("forced.mp3");
+        var existing = new TrackTags(Genre: "Drum and Bass");
+        var analysisRunner = new StubAnalysisRunner(new BpmResult(105.0, 0.7, WasSnapped: false, IsForcedFallback: true));
+
+        var outcome = await RunSingle(file, existing, analysisRunner);
+
+        outcome.BpmIsForcedFallback.Should().BeTrue();
+        outcome.BpmWasSnapped.Should().BeFalse();
+        outcome.Resolved.Bpm.Value.Should().Be(105.0);
+    }
+
+    [Fact]
+    public async Task Analyzer_forced_fallback_is_dropped_when_existing_tag_wins_under_skip_if_present()
+    {
+        // Existing BPM 124 + skip_if_present → analyzer value never reaches resolved.Bpm, so
+        // dark-blue must NOT fire even though the analyzer technically detected a forced fallback.
+        var file = MakeTrackFile("ignored.mp3");
+        var existing = new TrackTags(Genre: "Drum and Bass", Bpm: 124);
+        var analysisRunner = new StubAnalysisRunner(new BpmResult(105.0, 0.7, WasSnapped: true, IsForcedFallback: true));
+
+        var outcome = await RunSingle(file, existing, analysisRunner);
+
+        outcome.BpmIsForcedFallback.Should().BeFalse(
+            because: "existing-tag policy preserved 124; the analyzer's forced-fallback diagnostic doesn't apply to the value actually written");
+        outcome.Resolved.Bpm.Value.Should().Be(124);
+    }
+
+    [Fact]
+    public async Task Analyzer_snap_flag_propagates_when_analysis_value_passes_through()
+    {
+        // Analyzer pre-snapped 122.07 → 122.0 (in-range path). The pipeline-level snap is a
+        // no-op on the already-on-grid value, so it needs to OR-in analysis.Bpm.WasSnapped.
+        var file = MakeTrackFile("snapped.mp3");
+        var existing = new TrackTags(Genre: "House");
+        var analysisRunner = new StubAnalysisRunner(new BpmResult(122.0, 0.7, WasSnapped: true));
+
+        var outcome = await RunSingle(file, existing, analysisRunner);
+
+        outcome.BpmWasSnapped.Should().BeTrue();
+        outcome.BpmIsForcedFallback.Should().BeFalse();
+        outcome.Resolved.Bpm.Value.Should().Be(122.0);
+    }
+
+    [Fact]
+    public async Task Pipeline_snap_still_fires_for_existing_bpm_drift()
+    {
+        // Existing tag = 126.01 (drift), analyzer empty → pipeline-level snap rounds to 126 and
+        // sets BpmWasSnapped. This is the original behaviour and must still work end-to-end.
+        var file = MakeTrackFile("existing.mp3");
+        var existing = new TrackTags(Bpm: 126.01);
+
+        var outcome = await RunSingle(file, existing, NoopAnalysisRunner.Instance);
+
+        outcome.BpmWasSnapped.Should().BeTrue();
+        outcome.BpmIsForcedFallback.Should().BeFalse();
+        outcome.Resolved.Bpm.Value.Should().Be(126.0);
+    }
+
+    private static async Task<PipelineOutcome> RunSingle(TrackFile file, TrackTags existing, IAnalysisRunner runner)
+    {
+        var discovery = Substitute.For<IFileDiscoveryService>();
+        discovery.EnumerateAsync(Arg.Any<ScanOptions>(), Arg.Any<CancellationToken>())
+            .Returns(AsAsync(file));
+        var reader = Substitute.For<ITagReaderAdapter>();
+        reader.Read(file.Path).Returns(existing);
+        var writer = Substitute.For<ITagWriterAdapter>();
+
+        var pipeline = new TagPipeline(
+            discovery, reader, writer, runner,
+            NoopLookupRunner.Instance, new MappingRuleEngine(),
+            NoopSortService.Instance, NullLogger<TagPipeline>.Instance);
+
+        var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true), new MappingRuleSet()));
+        outcomes.Should().HaveCount(1);
+        return outcomes[0];
+    }
+
+    /// <summary>Yields a single canned <see cref="BpmResult"/> for every track.</summary>
+    private sealed class StubAnalysisRunner : IAnalysisRunner
+    {
+        private readonly BpmResult _bpm;
+        public StubAnalysisRunner(BpmResult bpm) => _bpm = bpm;
+
+        public Task<AnalysisResult> RunAsync(TrackFile file, TrackTags existing, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AnalysisResult(
+                _bpm,
+                new KeyResult(null, 0),
+                new EnergyResult(null, 0),
+                new FingerprintResult(null, 0),
+                AcoustIdMbid: null));
+    }
 }

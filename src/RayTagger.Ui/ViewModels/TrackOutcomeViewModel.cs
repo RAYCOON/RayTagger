@@ -33,40 +33,65 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasGenreDiff))]
     [NotifyPropertyChangedFor(nameof(GenreDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveGenre))]
     private string? _proposedGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSubGenreDiff))]
     [NotifyPropertyChangedFor(nameof(SubGenreDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveSubGenre))]
     private string? _proposedSubGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasBpmDiff))]
     [NotifyPropertyChangedFor(nameof(BpmDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveBpm))]
     private double? _proposedBpm;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasKeyDiff))]
     [NotifyPropertyChangedFor(nameof(KeyDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveKey))]
     private string? _proposedKey;
+    // Camelot is the same musical key as Standard but in Wheel notation (e.g. "Am" ↔ "8A").
+    // Carried separately so the grid can render both columns and highlight each diff
+    // independently — even though they always flip together (1:1 mapping in MusicalKey).
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCamelotKeyDiff))]
+    [NotifyPropertyChangedFor(nameof(CamelotKeyDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveCamelotKey))]
+    [NotifyPropertyChangedFor(nameof(EffectiveCamelotSortKey))]
+    private string? _proposedCamelotKey;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasEnergyDiff))]
     [NotifyPropertyChangedFor(nameof(EnergyDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveEnergy))]
     private int? _proposedEnergy;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasMoodDiff))]
     [NotifyPropertyChangedFor(nameof(MoodDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveMood))]
     private string? _proposedMood;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSetPositionDiff))]
     [NotifyPropertyChangedFor(nameof(SetPositionDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveSetPosition))]
     private string? _proposedSetPosition;
     [ObservableProperty] private IReadOnlyList<string> _appliedRules = [];
     [ObservableProperty] private string? _destinationPath;
 
     /// <summary>
-    /// True when the pipeline's BPM-snap post-step rounded the analyzer's output to an integer
-    /// (e.g. 122.07 → 122). Drives the BPM cell's dark-red foreground so the user can see which
-    /// values were corrected vs. emitted verbatim.
+    /// True when the pipeline's BPM-snap post-step (or the analyzer's own snap on a folded
+    /// in-range value) rounded the value (e.g. 122.07 → 122). Drives the BPM cell's dark-red
+    /// foreground so the user can see which values were corrected vs. emitted verbatim. Takes
+    /// effect only when <see cref="BpmIsForcedFallback"/> is false — forced-fallback wins.
     /// </summary>
     [ObservableProperty] private bool _bpmWasSnapped;
+
+    /// <summary>
+    /// True when the BPM analyzer's genre-range fold (×2 / ÷2 + snap) couldn't bring the value
+    /// back into the configured genre interval and fell back to <c>snap(raw)</c>. Drives the BPM
+    /// cell's dark-blue foreground so the user notices the unresolved disagreement between the
+    /// configured range and the audio's natural tempo.
+    /// </summary>
+    [ObservableProperty] private bool _bpmIsForcedFallback;
     /// <summary>
     /// Per-stage error messages. Settable so <see cref="UpdateFromOutcome"/> can refresh the list
     /// when a preview row transitions into a scanned row (the original ctor's init-only assignment
@@ -81,6 +106,7 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     public bool HasSubGenreDiff => ProposedSubGenre is not null && !string.Equals(ExistingSubGenre, ProposedSubGenre, StringComparison.Ordinal);
     public bool HasBpmDiff => ProposedBpm is not null && ProposedBpm != ExistingBpm;
     public bool HasKeyDiff => ProposedKey is not null && !string.Equals(ExistingKey, ProposedKey, StringComparison.Ordinal);
+    public bool HasCamelotKeyDiff => ProposedCamelotKey is not null && !string.Equals(ExistingCamelotKey, ProposedCamelotKey, StringComparison.Ordinal);
     public bool HasEnergyDiff => ProposedEnergy is not null && ProposedEnergy != ExistingEnergy;
     public bool HasMoodDiff => ProposedMood is not null && !string.Equals(ExistingMood, ProposedMood, StringComparison.Ordinal);
     public bool HasSetPositionDiff => ProposedSetPosition is not null && !string.Equals(ExistingSetPosition, ProposedSetPosition, StringComparison.Ordinal);
@@ -114,30 +140,43 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasGenreDiff))]
     [NotifyPropertyChangedFor(nameof(GenreDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveGenre))]
     private string? _existingGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSubGenreDiff))]
     [NotifyPropertyChangedFor(nameof(SubGenreDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveSubGenre))]
     private string? _existingSubGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasBpmDiff))]
     [NotifyPropertyChangedFor(nameof(BpmDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveBpm))]
     private double? _existingBpm;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasKeyDiff))]
     [NotifyPropertyChangedFor(nameof(KeyDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveKey))]
     private string? _existingKey;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCamelotKeyDiff))]
+    [NotifyPropertyChangedFor(nameof(CamelotKeyDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveCamelotKey))]
+    [NotifyPropertyChangedFor(nameof(EffectiveCamelotSortKey))]
+    private string? _existingCamelotKey;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasEnergyDiff))]
     [NotifyPropertyChangedFor(nameof(EnergyDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveEnergy))]
     private int? _existingEnergy;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasMoodDiff))]
     [NotifyPropertyChangedFor(nameof(MoodDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveMood))]
     private string? _existingMood;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSetPositionDiff))]
     [NotifyPropertyChangedFor(nameof(SetPositionDisplay))]
+    [NotifyPropertyChangedFor(nameof(EffectiveSetPosition))]
     private string? _existingSetPosition;
 
     // Display strings used by the results grid. Show "current → new" only when the proposal
@@ -148,6 +187,31 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     public string SubGenreDisplay => FormatDiff(ExistingSubGenre, ProposedSubGenre, HasSubGenreDiff);
     public string BpmDisplay => FormatBpmDiff(ExistingBpm, ProposedBpm, HasBpmDiff);
     public string KeyDisplay => FormatDiff(ExistingKey, ProposedKey, HasKeyDiff);
+    public string CamelotKeyDisplay => FormatDiff(ExistingCamelotKey, ProposedCamelotKey, HasCamelotKeyDiff);
+
+    /// <summary>
+    /// Wheel-ordered sort key for the Camelot column. Delegates to
+    /// <see cref="KeyNotationConverter.CamelotSortKey"/> in the Core layer — keeps the pure
+    /// notation logic out of the view model. Driven off <see cref="EffectiveCamelotKey"/> so
+    /// rows still in Discovery (no proposed yet) sort by the value on disk instead of
+    /// dropping to the bottom as null.
+    /// </summary>
+    public string? EffectiveCamelotSortKey => KeyNotationConverter.CamelotSortKey(EffectiveCamelotKey);
+
+    // Effective values = "what the cell would show as the authoritative number/string", i.e.
+    // proposed when the pipeline produced one, otherwise the existing value from disk. Used
+    // by SortMemberPath bindings and by the BPM range/comparison filter so:
+    //  - pre-scan rows (only Existing populated) still appear in numeric range filters,
+    //  - mid-scan rows (proposed not yet emitted) sort by their visible disk value,
+    //  - failed analyzer rows (proposed stays null) don't all collapse to the bottom.
+    public string? EffectiveGenre => ProposedGenre ?? ExistingGenre;
+    public string? EffectiveSubGenre => ProposedSubGenre ?? ExistingSubGenre;
+    public double? EffectiveBpm => ProposedBpm ?? ExistingBpm;
+    public string? EffectiveKey => ProposedKey ?? ExistingKey;
+    public string? EffectiveCamelotKey => ProposedCamelotKey ?? ExistingCamelotKey;
+    public int? EffectiveEnergy => ProposedEnergy ?? ExistingEnergy;
+    public string? EffectiveMood => ProposedMood ?? ExistingMood;
+    public string? EffectiveSetPosition => ProposedSetPosition ?? ExistingSetPosition;
     public string EnergyDisplay => FormatIntDiff(ExistingEnergy, ProposedEnergy, HasEnergyDiff);
     public string MoodDisplay => FormatDiff(ExistingMood, ProposedMood, HasMoodDiff);
     public string SetPositionDisplay => FormatDiff(ExistingSetPosition, ProposedSetPosition, HasSetPositionDiff);
@@ -215,6 +279,13 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     public string ModifiedDisplay =>
         SourceOutcome.File.LastModifiedUtc.ToLocalTime().ToString("dd.MM.yy HH:mm", CultureInfo.CurrentCulture);
 
+    // Raw sort keys — the DataGrid sorts lexicographically by default, which would order
+    // "10:05" before "1:23" and "9 MB" before "10 MB". The grid binds these via SortMemberPath
+    // so the header click compares the underlying number/date instead of the formatted string.
+    public int? LengthSeconds => ExistingAtScan?.DurationSeconds;
+    public long SizeBytes => SourceOutcome.File.SizeBytes;
+    public DateTime LastModifiedUtc => SourceOutcome.File.LastModifiedUtc;
+
     /// <summary>
     /// Short three-letter status pill. The full <see cref="StatusLabel"/> still drives the tooltip;
     /// this just gives the leftmost column a fixed-width glyph the user can scan at a glance.
@@ -272,12 +343,14 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ExistingSubGenre = existing.SubGenre;
         ExistingBpm = existing.Bpm;
         ExistingKey = existing.Key?.Standard;
+        ExistingCamelotKey = existing.Key?.Camelot;
         ExistingEnergy = existing.Energy;
         ExistingMood = existing.Mood;
         ExistingSetPosition = existing.SetPosition;
 
         ApplyResolvedFromOutcome(outcome);
         BpmWasSnapped = outcome.BpmWasSnapped;
+        BpmIsForcedFallback = outcome.BpmIsForcedFallback;
         Errors = [.. outcome.Errors.Select(e => $"[{e.Stage}] {e.Message}")];
     }
 
@@ -323,6 +396,7 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ExistingSubGenre = existing.SubGenre;
         ExistingBpm = existing.Bpm;
         ExistingKey = existing.Key?.Standard;
+        ExistingCamelotKey = existing.Key?.Camelot;
         ExistingEnergy = existing.Energy;
         ExistingMood = existing.Mood;
         ExistingSetPosition = existing.SetPosition;
@@ -355,12 +429,14 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ExistingSubGenre = existing.SubGenre;
         ExistingBpm = existing.Bpm;
         ExistingKey = existing.Key?.Standard;
+        ExistingCamelotKey = existing.Key?.Camelot;
         ExistingEnergy = existing.Energy;
         ExistingMood = existing.Mood;
         ExistingSetPosition = existing.SetPosition;
 
         ApplyResolvedFromOutcome(outcome);
         BpmWasSnapped = outcome.BpmWasSnapped;
+        BpmIsForcedFallback = outcome.BpmIsForcedFallback;
     }
 
     /// <summary>Mark the row as "currently being scanned" — flips the badge to SCN.</summary>
@@ -383,6 +459,7 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ProposedSubGenre = outcome.Resolved.SubGenre.Value;
         ProposedBpm = outcome.Resolved.Bpm.Value;
         ProposedKey = outcome.Resolved.Key.Value?.Standard;
+        ProposedCamelotKey = outcome.Resolved.Key.Value?.Camelot;
         ProposedEnergy = outcome.Resolved.Energy.Value;
         ProposedMood = outcome.Resolved.Mood.Value;
         ProposedSetPosition = outcome.Resolved.SetPosition.Value;
@@ -433,6 +510,7 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ExistingSubGenre = ProposedSubGenre;
         ExistingBpm = ProposedBpm;
         ExistingKey = ProposedKey;
+        ExistingCamelotKey = ProposedCamelotKey;
         ExistingEnergy = ProposedEnergy;
         ExistingMood = ProposedMood;
         ExistingSetPosition = ProposedSetPosition;
@@ -474,6 +552,7 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ExistingSubGenre = restored.SubGenre;
         ExistingBpm = restored.Bpm;
         ExistingKey = restored.Key?.Standard;
+        ExistingCamelotKey = restored.Key?.Camelot;
         ExistingEnergy = restored.Energy;
         ExistingMood = restored.Mood;
         ExistingSetPosition = restored.SetPosition;

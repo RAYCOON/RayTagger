@@ -63,7 +63,7 @@ internal static class ScanHandler
 
         var statusReporter = new SpectreToolStatusReporter(console);
         var factory = serviceProvider.GetRequiredService<PipelineFactory>();
-        var built = await factory.BuildAsync(options, statusReporter, cancellationToken).ConfigureAwait(false);
+        using var built = await factory.BuildAsync(options, statusReporter, cancellationToken).ConfigureAwait(false);
 
         var pipeline = new TagPipeline(
             serviceProvider.GetRequiredService<IFileDiscoveryService>(),

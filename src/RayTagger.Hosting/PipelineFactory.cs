@@ -34,6 +34,41 @@ public sealed class PipelineFactory
         _services = services;
     }
 
+    /// <summary>
+    /// Builds an <see cref="IEnergyCalibrationService"/> for the <c>calibrate-energy</c> CLI verb /
+    /// the UI "Calibrate Energy" button. Reuses the same Essentia bootstrap path as
+    /// <see cref="BuildAsync"/> so the service either picks up an on-PATH binary or downloads one
+    /// via the native-tools manifest. Returns <c>null</c> when Essentia cannot be made available
+    /// (offline + missing PATH binary) — the caller should surface that as an actionable error.
+    /// </summary>
+    public async Task<IEnergyCalibrationService?> BuildEnergyCalibrationServiceAsync(
+        TaggerOptions options,
+        IToolStatusReporter statusReporter,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(statusReporter);
+
+        var loggerFactory = _services.GetRequiredService<ILoggerFactory>();
+        var runner = _services.GetRequiredService<NativeProcessRunner>();
+        var probe = _services.GetRequiredService<IAnalysisToolProbe>();
+        var httpClientFactory = _services.GetRequiredService<IHttpClientFactory>();
+        var discovery = _services.GetRequiredService<IFileDiscoveryService>();
+
+        var bootstrapHttp = httpClientFactory.CreateClient(ServiceCollectionComposer.NativeToolsBootstrapHttpClient);
+        var resolver = NativeToolsBootstrapFactory.BuildResolver(
+            options.NativeTools, probe, bootstrapHttp, loggerFactory, statusReporter);
+
+        var essentia = await TryBuildEssentiaServiceAsync(
+            options.Analysis, runner, resolver, loggerFactory, statusReporter, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (essentia is null) return null;
+
+        return new EnergyCalibrationService(
+            discovery, essentia, loggerFactory.CreateLogger<EnergyCalibrationService>());
+    }
+
     public async Task<PipelineBuildResult> BuildAsync(
         TaggerOptions options,
         IToolStatusReporter statusReporter,
@@ -55,7 +90,7 @@ public sealed class PipelineFactory
             options.NativeTools, probe, bootstrapHttp, loggerFactory, statusReporter);
 
         var analysisRunner = await BuildAnalysisRunnerAsync(
-            options.Analysis, runner, resolver, loggerFactory, statusReporter, cancellationToken)
+            options, runner, resolver, loggerFactory, statusReporter, cancellationToken)
             .ConfigureAwait(false);
 
         var lookupRunner = BuildLookupRunner(
@@ -65,19 +100,20 @@ public sealed class PipelineFactory
     }
 
     private static async Task<AnalysisRunner> BuildAnalysisRunnerAsync(
-        AnalysisOptions analysis,
+        TaggerOptions options,
         NativeProcessRunner runner,
         NativeToolResolver resolver,
         ILoggerFactory loggerFactory,
         IToolStatusReporter statusReporter,
         CancellationToken cancellationToken)
     {
+        var analysis = options.Analysis;
         var essentiaService = await TryBuildEssentiaServiceAsync(
             analysis, runner, resolver, loggerFactory, statusReporter, cancellationToken)
             .ConfigureAwait(false);
 
         var bpm = essentiaService is not null && IsEssentiaProvider(analysis.Bpm)
-            ? new EssentiaBpmAnalyzer(essentiaService, loggerFactory.CreateLogger<EssentiaBpmAnalyzer>())
+            ? new EssentiaBpmAnalyzer(essentiaService, loggerFactory.CreateLogger<EssentiaBpmAnalyzer>(), analysis.Bpm)
             : (IBpmAnalyzer?)null;
 
         var key = essentiaService is not null && IsEssentiaProvider(analysis.Key)
@@ -85,14 +121,26 @@ public sealed class PipelineFactory
             : (IKeyAnalyzer?)null;
 
         var energy = essentiaService is not null && IsEssentiaProvider(analysis.Energy)
-            ? new EssentiaEnergyAnalyzer(essentiaService, loggerFactory.CreateLogger<EssentiaEnergyAnalyzer>())
+            ? new EssentiaEnergyAnalyzer(
+                essentiaService,
+                loggerFactory.CreateLogger<EssentiaEnergyAnalyzer>(),
+                analysis.Energy.LoadedCalibration)
             : (IEnergyAnalyzer?)null;
 
         var fingerprint = await TryBuildFingerprintAsync(
             analysis.Fingerprint, runner, resolver, loggerFactory, statusReporter, cancellationToken)
             .ConfigureAwait(false);
 
-        return new AnalysisRunner(bpm, key, energy, fingerprint,
+        // Resolver is wired in unconditionally — when neither per-genre ranges nor a fallback
+        // are configured, Resolve() short-circuits to null and the BPM analyzer leaves the raw
+        // Essentia value alone (the pipeline-level snap still cleans up drift).
+        var tempoRangeResolver = new TempoRangeResolver(
+            analysis.Bpm,
+            options.Taxonomy.Loaded,
+            loggerFactory.CreateLogger<TempoRangeResolver>());
+
+        return new AnalysisRunner(
+            bpm, key, energy, fingerprint, tempoRangeResolver,
             loggerFactory.CreateLogger<AnalysisRunner>());
     }
 
@@ -263,4 +311,26 @@ public sealed class PipelineFactory
 /// What <see cref="PipelineFactory.BuildAsync"/> hands back. The runners are wired and ready for
 /// <see cref="TagPipeline"/>; the report says which analyzers / providers came online.
 /// </summary>
-public sealed record PipelineBuildResult(IAnalysisRunner AnalysisRunner, ILookupRunner LookupRunner);
+/// <remarks>
+/// Implements <see cref="IDisposable"/> so callers retain a stable <c>using</c>-pattern even though
+/// the current build has no transient resources to release. If a future analyzer needs scoped
+/// cleanup, route it through here.
+/// </remarks>
+public sealed class PipelineBuildResult : IDisposable
+{
+    public IAnalysisRunner AnalysisRunner { get; }
+    public ILookupRunner LookupRunner { get; }
+
+    public PipelineBuildResult(IAnalysisRunner analysisRunner, ILookupRunner lookupRunner)
+    {
+        ArgumentNullException.ThrowIfNull(analysisRunner);
+        ArgumentNullException.ThrowIfNull(lookupRunner);
+        AnalysisRunner = analysisRunner;
+        LookupRunner = lookupRunner;
+    }
+
+    public void Dispose()
+    {
+        // No-op for now. Kept on IDisposable so the `using` pattern at call sites stays valid.
+    }
+}

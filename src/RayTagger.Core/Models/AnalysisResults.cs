@@ -4,7 +4,23 @@ namespace RayTagger.Core.Models;
 /// BPM analysis output. <see cref="Confidence"/> in [0,1] — the write stage compares against
 /// <c>analysis.bpm.min_confidence</c> in tagger.yaml and preserves the existing tag if below.
 /// </summary>
-public sealed record BpmResult(double? Bpm, double Confidence);
+/// <param name="Bpm">Final BPM (after the analyzer's fold + snap), or <c>null</c> when detection failed.</param>
+/// <param name="Confidence">Essentia's <c>bpm_histogram_first_peak_weight</c>, clamped to [0,1].</param>
+/// <param name="WasSnapped">
+/// True when the analyzer's snap-to-grid changed the value (Essentia drift like 122.07 → 122.0).
+/// Combined with the pipeline-level snap to drive the UI's dark-red highlight.
+/// </param>
+/// <param name="IsForcedFallback">
+/// True when the genre-range fold (raw &lt; Min → ×2, raw &gt; Max → ÷2, then snap) failed to
+/// bring the value back into the configured genre range. In that case the analyzer falls back
+/// to <c>snap(raw)</c> and signals the UI to highlight the cell dark-blue — the BPM is the user's
+/// best raw signal, but the configured genre range disagrees with it.
+/// </param>
+public sealed record BpmResult(
+    double? Bpm,
+    double Confidence,
+    bool WasSnapped = false,
+    bool IsForcedFallback = false);
 
 public sealed record KeyResult(MusicalKey? Key, double Confidence);
 

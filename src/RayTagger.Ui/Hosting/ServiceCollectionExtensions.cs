@@ -41,6 +41,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IToolStatusReporter>(sp => sp.GetRequiredService<UiToolStatusReporter>());
         services.AddSingleton<LibraryDiscoveryService>();
         services.AddSingleton<ScanCoordinator>();
+        services.AddSingleton<EnergyCalibrationCoordinator>();
         services.AddTransient<MainWindowViewModel>();
         services.AddTransient<ScanViewModel>();
         services.AddTransient<RuleEditorViewModel>();

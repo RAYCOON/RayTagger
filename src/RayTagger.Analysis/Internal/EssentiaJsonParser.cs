@@ -43,11 +43,21 @@ internal static class EssentiaJsonParser
 
         var (keyKey, keyScale, keyStrength) = ReadEdmaKey(root);
 
-        // spectral_energy is a frame-level descriptor, so the music extractor aggregates it
-        // into an object {mean, var, min, max, ...}. We want the mean as a representative scalar.
+        // Energy descriptors. Frame-level outputs are aggregated by Essentia into
+        // {mean, var, min, max, ...} — we read the mean. Track-level scalars (average_loudness,
+        // onset_rate, danceability) are bare numbers.
         var spectralEnergy = TryReadAggregateMean(root, "lowlevel", "spectral_energy");
+        var spectralFlux = TryReadAggregateMean(root, "lowlevel", "spectral_flux");
+        var averageLoudness = TryReadDouble(root, "lowlevel", "average_loudness");
+        var onsetRate = TryReadDouble(root, "rhythm", "onset_rate");
+        var danceability = TryReadDouble(root, "rhythm", "danceability");
+        var beatsLoudness = TryReadAggregateMean(root, "rhythm", "beats_loudness");
 
-        return new EssentiaResult(bpm, bpmConfidence, keyKey, keyScale, keyStrength, spectralEnergy);
+        return new EssentiaResult(
+            bpm, bpmConfidence,
+            keyKey, keyScale, keyStrength,
+            spectralEnergy,
+            averageLoudness, spectralFlux, onsetRate, danceability, beatsLoudness);
     }
 
     public static EssentiaResult ParseString(string json)

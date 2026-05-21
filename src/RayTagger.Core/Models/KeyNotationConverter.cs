@@ -154,4 +154,21 @@ public static class KeyNotationConverter
         // Format: digit(s) + A/B, e.g. "8A", "11B". Strip whitespace, uppercase.
         return value.Trim().ToUpperInvariant();
     }
+
+    /// <summary>
+    /// Zero-pad the leading number of a Camelot code so lexicographic sort yields Wheel order
+    /// (1A, 1B, 2A, 2B, …, 12A, 12B) instead of "10A" landing before "2A". Pure transform on
+    /// the textual representation — null/whitespace passes through as null, codes that don't
+    /// end in A/B fall through unchanged so degenerate inputs don't silently produce
+    /// misleading sort keys.
+    /// </summary>
+    public static string? CamelotSortKey(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var letterIndex = value.Length - 1;
+        var letter = char.ToUpperInvariant(value[letterIndex]);
+        if (letter != 'A' && letter != 'B') return value;
+        var number = value[..letterIndex];
+        return number.Length == 1 ? $"0{number}{letter}" : $"{number}{letter}";
+    }
 }

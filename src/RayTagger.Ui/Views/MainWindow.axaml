@@ -42,6 +42,21 @@
                                 Click="OnApplyAllClick"
                                 IsEnabled="{Binding !Scan.IsBusy}"
                                 ToolTip.Tip="Schreibt alle 'Würde ändern'-Zeilen auf Disk (mit Backup-Sidecar)."/>
+                        <Button Content="Filter zurücksetzen"
+                                Command="{Binding Scan.Filters.ClearFiltersCommand}"
+                                ToolTip.Tip="Löscht alle Spaltenfilter."/>
+
+                        <!-- Separator pushing calibration to the right edge of the toolbar -->
+                        <Border Width="1" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="8,4"/>
+
+                        <Button Content="Energie kalibrieren…"
+                                Click="OnCalibrateEnergyClick"
+                                IsEnabled="{Binding CalibrateEnergyCommand.CanExecute}"
+                                ToolTip.Tip="Friert ein Energie-Profil aus dem gewählten Ordner ein. Re-Tagging vorhandener Dateien muss manuell angestoßen werden."/>
+                        <TextBlock VerticalAlignment="Center"
+                                   Text="{Binding CalibrationStatus, FallbackValue=''}"
+                                   Opacity="0.7"
+                                   TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                 </Border>
 
@@ -73,9 +88,11 @@
                     </ItemsControl>
                 </Border>
 
-                <!-- Results grid -->
+                <!-- Results grid — bound to FilteredOutcomes so per-column header TextBoxes
+                     narrow the visible rows live. The underlying Outcomes collection stays the
+                     source of truth (Apply / Revert / Live-Preview keep mutating it directly). -->
                 <DataGrid Grid.Row="2" Name="ResultsGrid"
-                          ItemsSource="{Binding Scan.Outcomes}"
+                          ItemsSource="{Binding Scan.FilteredOutcomes}"
                           CanUserSortColumns="True"
                           CanUserResizeColumns="True"
                           AutoGenerateColumns="False"
@@ -90,11 +107,33 @@
                         <Style Selector="DataGridCell">
                             <Setter Property="Padding" Value="0,1"/>
                         </Style>
+                        <!-- Shared style for the inline filter TextBox living in every column
+                             header. Kept small so the header row doesn't dominate the grid. -->
+                        <Style Selector="TextBox.filter">
+                            <Setter Property="Watermark" Value="Filter…"/>
+                            <Setter Property="FontWeight" Value="Normal"/>
+                            <Setter Property="FontSize" Value="11"/>
+                            <Setter Property="Padding" Value="3,1"/>
+                            <Setter Property="MinHeight" Value="22"/>
+                            <Setter Property="Margin" Value="0,2,0,0"/>
+                        </Style>
                     </DataGrid.Styles>
                     <DataGrid.Columns>
                         <!-- Status badge: 3-letter pill (OK / CNG / ERR) instead of a full word.
-                             The full StatusLabel still shows in the tooltip for screen readers. -->
-                        <DataGridTemplateColumn Header="Status" Width="60">
+                             The full StatusLabel still shows in the tooltip for screen readers.
+                             SortMemberPath uses the full StatusLabel so click-to-sort groups
+                             "Fehler"/"Geschrieben"/"Würde ändern" rather than the truncated badge.
+                             Header carries an inline filter TextBox (contains-match on the badge,
+                             so e.g. "ER" narrows to ERR rows). Same pattern repeats for every
+                             filterable column below. -->
+                        <DataGridTemplateColumn Width="60" SortMemberPath="StatusLabel">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Status" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Status, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <TextBlock Text="{Binding StatusBadge}"
@@ -106,15 +145,57 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Dateiname" Width="200" Binding="{Binding FileName}"/>
-                        <DataGridTextColumn Header="Titel" Width="180" Binding="{Binding Title}"/>
-                        <DataGridTextColumn Header="Interpret" Width="140" Binding="{Binding Artist}"/>
-                        <DataGridTextColumn Header="Jahr" Width="60" Binding="{Binding Year}"/>
+                        <DataGridTextColumn Width="200" Binding="{CompiledBinding FileName, DataType=vm:TrackOutcomeViewModel}">
+                            <DataGridTextColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Dateiname" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.FileName, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Width="180" Binding="{CompiledBinding Title, DataType=vm:TrackOutcomeViewModel}">
+                            <DataGridTextColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Titel" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Title, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Width="140" Binding="{CompiledBinding Artist, DataType=vm:TrackOutcomeViewModel}">
+                            <DataGridTextColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Interpret" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Artist, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Width="60" Binding="{CompiledBinding Year, DataType=vm:TrackOutcomeViewModel}">
+                            <DataGridTextColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Jahr" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Year, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
                         <!-- Diff-aware columns: Border background lights up yellow when the row's
                              Existing-* and Proposed-* differ, so a Live-Preview edit visually
                              pops the cells it actually changed. The HasXxxDiff flags are recomputed
-                             via [NotifyPropertyChangedFor] on every Existing-/Proposed- mutation. -->
-                        <DataGridTemplateColumn Header="Genre" Width="180">
+                             via [NotifyPropertyChangedFor] on every Existing-/Proposed- mutation.
+                             SortMemberPath points at Effective* (Proposed ?? Existing) so rows
+                             still in Discovery (or with failed analyzer) sort by their visible
+                             disk value instead of collapsing as null. -->
+                        <DataGridTemplateColumn Width="180" SortMemberPath="EffectiveGenre">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Genre" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Genre, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
@@ -124,7 +205,14 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="SubGenre" Width="120">
+                        <DataGridTemplateColumn Width="120" SortMemberPath="EffectiveSubGenre">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="SubGenre" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.SubGenre, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
@@ -134,22 +222,43 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="BPM" Width="100">
+                        <DataGridTemplateColumn Width="100" SortMemberPath="EffectiveBpm">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="BPM" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Bpm, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasBpmDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
-                                        <!-- Foreground turns dark red when the analyzer's snap-to-integer
-                                             rounded the raw BPM (e.g. 122.07 → 122). Null brush in the
-                                             default case lets the row inherit the theme's foreground. -->
+                                        <!-- Foreground priority: dark blue when the analyzer's
+                                             genre-range fold failed (forced fallback to snap(raw)),
+                                             dark red when a snap-to-grid corrected drift like
+                                             122.07 → 122, otherwise the theme default. -->
                                         <TextBlock Text="{Binding BpmDisplay}"
-                                                   VerticalAlignment="Center"
-                                                   Foreground="{Binding BpmWasSnapped, Converter={x:Static vm:SnapToBrushConverter.Instance}}"/>
+                                                   VerticalAlignment="Center">
+                                            <TextBlock.Foreground>
+                                                <MultiBinding Converter="{x:Static vm:BpmHighlightBrushConverter.Instance}">
+                                                    <Binding Path="BpmIsForcedFallback"/>
+                                                    <Binding Path="BpmWasSnapped"/>
+                                                </MultiBinding>
+                                            </TextBlock.Foreground>
+                                        </TextBlock>
                                     </Border>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Key" Width="80">
+                        <DataGridTemplateColumn Width="80" SortMemberPath="EffectiveKey">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Key" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Key, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
@@ -159,7 +268,35 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Energy" Width="80">
+                        <!-- Camelot Wheel notation (z.B. "11B" für A-Dur, "8A" für A-Moll).
+                             Selber Inhalt wie Key, nur andere Schreibweise — beide Spalten
+                             leuchten gemeinsam, wenn der Key wechselt. SortMemberPath nutzt
+                             den nullengepaddeten Sort-Key (Wheel-Reihenfolge, nicht lexikografisch). -->
+                        <DataGridTemplateColumn Width="80" SortMemberPath="EffectiveCamelotSortKey">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Camelot" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.CamelotKey, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Border Padding="6,0" VerticalAlignment="Stretch"
+                                            Background="{Binding HasCamelotKeyDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
+                                        <TextBlock Text="{Binding CamelotKeyDisplay}" VerticalAlignment="Center"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Width="80" SortMemberPath="EffectiveEnergy">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Energy" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Energy, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
@@ -169,7 +306,14 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Mood" Width="120">
+                        <DataGridTemplateColumn Width="120" SortMemberPath="EffectiveMood">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Mood" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Mood, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
@@ -179,7 +323,14 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Set Time" Width="120">
+                        <DataGridTemplateColumn Width="120" SortMemberPath="EffectiveSetPosition">
+                            <DataGridTemplateColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Set Time" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.SetPosition, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
@@ -189,13 +340,52 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Album" Width="180" Binding="{Binding Album}"/>
-                        <DataGridTextColumn Header="Länge" Width="70" Binding="{Binding LengthDisplay}"/>
-                        <DataGridTextColumn Header="Größe" Width="80" Binding="{Binding SizeDisplay}"/>
-                        <DataGridTextColumn Header="Geändert" Width="115" Binding="{Binding ModifiedDisplay}"/>
+                        <DataGridTextColumn Width="180" Binding="{CompiledBinding Album, DataType=vm:TrackOutcomeViewModel}">
+                            <DataGridTextColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Album" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Album, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <!-- Länge/Größe/Geändert zeigen formatierte Strings ("1:23", "12,4 MB",
+                             "21.05.26 14:35"), sortieren aber über die Roh-Properties — sonst
+                             käme "10:05" vor "1:23" und "9 MB" vor "10 MB". -->
+                        <DataGridTextColumn Width="70" Binding="{CompiledBinding LengthDisplay, DataType=vm:TrackOutcomeViewModel}"
+                                            SortMemberPath="LengthSeconds">
+                            <DataGridTextColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Länge" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Length, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Width="80" Binding="{CompiledBinding SizeDisplay, DataType=vm:TrackOutcomeViewModel}"
+                                            SortMemberPath="SizeBytes">
+                            <DataGridTextColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Größe" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Size, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Width="115" Binding="{CompiledBinding ModifiedDisplay, DataType=vm:TrackOutcomeViewModel}"
+                                            SortMemberPath="LastModifiedUtc">
+                            <DataGridTextColumn.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Geändert" FontWeight="Bold"/>
+                                    <TextBox Classes="filter"
+                                             Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).Scan.Filters.Modified, Mode=TwoWay}"/>
+                                </StackPanel>
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
                         <!-- Rule popup: small button per row → modal listing every fired rule.
-                             Replaces the previous comma-joined cell that truncated on long chains. -->
-                        <DataGridTemplateColumn Header="Regeln" Width="80">
+                             Replaces the previous comma-joined cell that truncated on long chains.
+                             Buttons sind nicht sinnvoll sortierbar. -->
+                        <DataGridTemplateColumn Header="Regeln" Width="80" CanUserSort="False">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Button Content="Zeigen"
@@ -209,8 +399,8 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <!-- Per-row Aktion: Apply + Revert side by side. -->
-                        <DataGridTemplateColumn Header="Aktion" Width="200">
+                        <!-- Per-row Aktion: Apply + Revert side by side. Buttons sind nicht sortierbar. -->
+                        <DataGridTemplateColumn Header="Aktion" Width="200" CanUserSort="False">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <StackPanel Orientation="Horizontal" Spacing="4"

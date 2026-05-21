@@ -45,6 +45,169 @@ public class TrackOutcomeViewModelTests
         vm.CanApply.Should().BeFalse();
     }
 
+    // ===== Camelot sort-key normalization (B1) =====================================================
+
+    [Theory]
+    [InlineData("1A", "01A")]
+    [InlineData("9B", "09B")]
+    [InlineData("12A", "12A")]
+    [InlineData("12B", "12B")]
+    [InlineData("10A", "10A")]
+    [InlineData("5a", "05A")]   // lower-case letter normalised to upper
+    [InlineData("11b", "11B")]
+    public void Camelot_sort_key_zero_pads_single_digit_numbers(string camelot, string expectedSortKey)
+    {
+        var existing = TrackTags.Empty with { Key = new MusicalKey("Am", camelot) };
+        var vm = new TrackOutcomeViewModel(DefaultFile, existing);
+        vm.EffectiveCamelotSortKey.Should().Be(expectedSortKey);
+    }
+
+    [Fact]
+    public void Camelot_sort_key_passes_unexpected_shapes_through()
+    {
+        // "12C" is not a real Camelot code (only A / B suffixes exist). Pass through unchanged
+        // rather than silently producing a misleading sort key.
+        var existing = TrackTags.Empty with { Key = new MusicalKey("X", "12C") };
+        var vm = new TrackOutcomeViewModel(DefaultFile, existing);
+        vm.EffectiveCamelotSortKey.Should().Be("12C");
+    }
+
+    [Fact]
+    public void Camelot_sort_key_null_when_both_existing_and_proposed_are_missing()
+    {
+        // No key at all — Effective falls back to null, sort-key is null.
+        var existing = TrackTags.Empty;
+        var vm = new TrackOutcomeViewModel(DefaultFile, existing);
+        vm.EffectiveCamelotSortKey.Should().BeNull();
+    }
+
+    // ===== Camelot pipeline through lifecycle helpers (B2) =========================================
+
+    [Fact]
+    public void Preview_ctor_seeds_Existing_camelot_key()
+    {
+        var existing = TrackTags.Empty with { Key = new MusicalKey("F#m", "11A") };
+        var vm = new TrackOutcomeViewModel(DefaultFile, existing);
+        vm.ExistingCamelotKey.Should().Be("11A");
+        vm.ProposedCamelotKey.Should().BeNull();
+        vm.HasCamelotKeyDiff.Should().BeFalse();
+    }
+
+    [Fact]
+    public void UpdateFromOutcome_overwrites_both_existing_and_proposed_camelot()
+    {
+        var vm = new TrackOutcomeViewModel(DefaultFile, TrackTags.Empty);
+
+        var existingAtScan = TrackTags.Empty with { Key = new MusicalKey("Am", "8A") };
+        var resolved = ResolvedTrackTags.Empty with
+        {
+            Key = new ResolvedField<MusicalKey>(new MusicalKey("Cm", "5A"), TagFieldSource.Analysis, 1.0),
+        };
+        var outcome = new PipelineOutcome(DefaultFile, resolved, [], null, PipelineStatus.Skipped, [],
+            PreMapResolved: null, ExistingAtScan: existingAtScan);
+        vm.UpdateFromOutcome(outcome, existingAtScan);
+
+        vm.ExistingCamelotKey.Should().Be("8A");
+        vm.ProposedCamelotKey.Should().Be("5A");
+        vm.HasCamelotKeyDiff.Should().BeTrue();
+        vm.CamelotKeyDisplay.Should().Be("8A → 5A");
+    }
+
+    [Fact]
+    public void EndApplySuccess_lifts_camelot_existing_to_proposed()
+    {
+        var existingAtScan = TrackTags.Empty with { Key = new MusicalKey("Am", "8A") };
+        var resolved = ResolvedTrackTags.Empty with
+        {
+            Key = new ResolvedField<MusicalKey>(new MusicalKey("Cm", "5A"), TagFieldSource.Analysis, 1.0),
+        };
+        var outcome = new PipelineOutcome(DefaultFile, resolved, [], null, PipelineStatus.Skipped, [],
+            PreMapResolved: null, ExistingAtScan: existingAtScan);
+        var vm = new TrackOutcomeViewModel(outcome, existingAtScan);
+
+        vm.EndApplySuccess();
+
+        vm.ExistingCamelotKey.Should().Be("5A"); // lifted
+        vm.ProposedCamelotKey.Should().Be("5A");
+        vm.HasCamelotKeyDiff.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EndRevertSuccess_restores_camelot_from_snapshot()
+    {
+        var existingAtScan = TrackTags.Empty with { Key = new MusicalKey("Cm", "5A") };
+        var resolved = ResolvedTrackTags.Empty with
+        {
+            Key = new ResolvedField<MusicalKey>(new MusicalKey("Gm", "6A"), TagFieldSource.Analysis, 1.0),
+        };
+        var outcome = new PipelineOutcome(DefaultFile, resolved, [], null, PipelineStatus.Skipped, [],
+            PreMapResolved: null, ExistingAtScan: existingAtScan);
+        var vm = new TrackOutcomeViewModel(outcome, existingAtScan);
+        vm.HasSidecar = true;
+        vm.EndApplySuccess(); // simulate prior write — existing now mirrors "6A"
+
+        var restored = TrackTags.Empty with { Key = new MusicalKey("Cm", "5A") };
+        vm.EndRevertSuccess(restored);
+
+        vm.ExistingCamelotKey.Should().Be("5A");
+        vm.HasCamelotKeyDiff.Should().BeTrue(); // Proposed stayed at "6A"
+    }
+
+    [Fact]
+    public void Effective_props_prefer_Proposed_when_set()
+    {
+        // Post-scan row: rule engine overrode genre/bpm/key/energy/mood. Existing-* stays as
+        // disk values, Proposed-* carries the new ones. EffectiveXxx must surface Proposed.
+        var existing = TrackTags.Empty with
+        {
+            Genre = "House",
+            Bpm = 100.0,
+            Key = new MusicalKey("Am", "8A"),
+            Energy = 5,
+        };
+        var resolved = ResolvedTrackTags.Empty with
+        {
+            Genre = new ResolvedField<string>("Techno", TagFieldSource.Rules, 1.0),
+            Bpm = new ResolvedValueField<double>(128.0, TagFieldSource.Analysis, 1.0),
+            Key = new ResolvedField<MusicalKey>(new MusicalKey("Cm", "5A"), TagFieldSource.Analysis, 1.0),
+            Energy = new ResolvedValueField<int>(8, TagFieldSource.Analysis, 1.0),
+        };
+        var outcome = new PipelineOutcome(DefaultFile, resolved, [], null, PipelineStatus.Skipped, [],
+            PreMapResolved: null, ExistingAtScan: existing);
+        var vm = new TrackOutcomeViewModel(outcome, existing);
+
+        vm.EffectiveGenre.Should().Be("Techno");
+        vm.EffectiveBpm.Should().Be(128.0);
+        vm.EffectiveKey.Should().Be("Cm");
+        vm.EffectiveCamelotKey.Should().Be("5A");
+        vm.EffectiveCamelotSortKey.Should().Be("05A");
+        vm.EffectiveEnergy.Should().Be(8);
+    }
+
+    [Fact]
+    public void Effective_props_fall_back_to_Existing_when_Proposed_is_null()
+    {
+        // Pre-scan / discovery-only row: only Existing-* is populated, every Proposed-* is null.
+        // EffectiveXxx must surface the Existing value so the BPM range filter and the
+        // SortMemberPath bindings still see the disk reality instead of treating the row as null.
+        var existing = new TrackTags(
+            Title: null, Artist: null, Album: null, Year: null,
+            Genre: "House", SubGenre: "Tech", Bpm: 124.5, Key: new MusicalKey("Am", "8A"),
+            Energy: 7, Mood: "Driving", SetPosition: "Peak Time", DurationSeconds: 381);
+
+        var vm = new TrackOutcomeViewModel(DefaultFile, existing);
+
+        vm.EffectiveGenre.Should().Be("House");
+        vm.EffectiveSubGenre.Should().Be("Tech");
+        vm.EffectiveBpm.Should().Be(124.5);
+        vm.EffectiveKey.Should().Be("Am");
+        vm.EffectiveCamelotKey.Should().Be("8A");
+        vm.EffectiveCamelotSortKey.Should().Be("08A");
+        vm.EffectiveEnergy.Should().Be(7);
+        vm.EffectiveMood.Should().Be("Driving");
+        vm.EffectiveSetPosition.Should().Be("Peak Time");
+    }
+
     [Fact]
     public void Preview_ctor_with_discovery_error_flips_status_to_Fehler_and_stores_message()
     {

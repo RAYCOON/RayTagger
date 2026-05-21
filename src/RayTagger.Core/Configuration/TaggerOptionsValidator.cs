@@ -85,6 +85,14 @@ internal static class TaggerOptionsValidator
                 "analysis.bpm.snap_step",
                 $"Must be > 0 (got {analysis.Bpm.SnapStep}). 1.0 = integer snap, 0.5 = half-BPM snap."));
         }
+        foreach (var (genre, range) in analysis.Bpm.TempoRangesByGenre)
+        {
+            ValidateTempoRange(range, $"analysis.bpm.tempo_ranges_by_genre.{genre}", errors);
+        }
+        if (analysis.Bpm.TempoRangeFallback is not null)
+        {
+            ValidateTempoRange(analysis.Bpm.TempoRangeFallback, "analysis.bpm.tempo_range_fallback", errors);
+        }
         ValidateAnalyzer(analysis.Key, "analysis.key", errors);
         ValidateAnalyzer(analysis.Energy, "analysis.energy", errors);
         ValidateAnalyzer(analysis.Fingerprint, "analysis.fingerprint", errors);
@@ -128,6 +136,54 @@ internal static class TaggerOptionsValidator
             errors.Add(new ConfigurationError(
                 "lookup.providers",
                 "At least one provider must be listed when lookup is enabled."));
+        }
+    }
+
+    // Plausible musical tempo bounds — anything below 30 or above 300 BPM is either a
+    // mis-configured range or a special-case the user probably wants to handle explicitly.
+    // Essentia's own range is 40-208; we widen slightly so users with very slow/fast material
+    // (e.g. drone, hardcore) don't trip the validator unnecessarily.
+    private const double MinPlausibleBpm = 30;
+    private const double MaxPlausibleBpm = 300;
+
+    private static void ValidateTempoRange(
+        RayTagger.Core.Models.BpmTempoRange range, string pathPrefix, List<ConfigurationError> errors)
+    {
+        // Both bounds must be specified together — a half-specified range carries no usable
+        // signal for the fold algorithm.
+        if (range.Min.HasValue != range.Max.HasValue)
+        {
+            errors.Add(new ConfigurationError(
+                pathPrefix,
+                "min and max must be set together; provide both or neither."));
+            return;
+        }
+        if (!range.HasRange) return;   // empty entry — treat as "no range" (validation no-op)
+
+        var min = range.Min!.Value;
+        var max = range.Max!.Value;
+
+        // NaN/Infinity slip through every comparison (any comparison with NaN is false per IEEE 754),
+        // so guard them first. YAML can't express these values, but programmatic constructors can,
+        // and an undetected NaN would later confuse the histogram-range logic in Essentia.
+        if (!double.IsFinite(min) || !double.IsFinite(max))
+        {
+            errors.Add(new ConfigurationError(
+                pathPrefix,
+                $"min/max must be finite numbers, got [{min}, {max}]."));
+            return;
+        }
+        if (min >= max)
+        {
+            errors.Add(new ConfigurationError(
+                pathPrefix,
+                $"min ({min}) must be strictly less than max ({max})."));
+        }
+        if (min < MinPlausibleBpm || max > MaxPlausibleBpm)
+        {
+            errors.Add(new ConfigurationError(
+                pathPrefix,
+                $"Range [{min}, {max}] is outside plausible musical bounds [{MinPlausibleBpm}, {MaxPlausibleBpm}]."));
         }
     }
 

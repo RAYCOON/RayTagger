@@ -20,8 +20,11 @@ A scan run is a directed pipeline. Each stage is a small unit with a single resp
    └────────┬─────────┘
             ▼
    ┌──────────────────┐
-   │ 3. Analyze       │  Run enabled analyzers (BPM/Key/Energy/Fingerprint)
-   │                  │  in parallel per file. Each yields a partial result.
+   │ 3. Analyze       │  Resolve per-track hints (e.g. genre-based BPM tempo
+   │                  │  range via ITempoRangeResolver), then run enabled
+   │                  │  analyzers (BPM/Key/Energy/Fingerprint) in parallel.
+   │                  │  Essentia-backed analyzers share one process fork
+   │                  │  per (file, range) — see §3.
    └────────┬─────────┘
             ▼
    ┌──────────────────┐
@@ -129,10 +132,28 @@ public interface IFingerprintAnalyzer{ Task<FingerprintResult>  AnalyzeAsync(Tra
 |---------------|---------------------------------------------------------------|----------------------------------------------------------------|
 | BPM           | `EssentiaBpmAnalyzer`                                         | `rhythm.bpm` + `rhythm.bpm_histogram_first_peak_weight` (conf) |
 | Key           | `EssentiaKeyAnalyzer` (EDMA profile)                          | `tonal.key_edma.{key,scale,strength}`                          |
-| Energy        | `EssentiaEnergyAnalyzer` (log-mapped to 1–10)                 | `lowlevel.spectral_energy.mean`                                |
+| Energy        | `EssentiaEnergyAnalyzer` (5-feature composite, 1–10)          | `lowlevel.{spectral_flux,average_loudness}` + `rhythm.{beats_loudness,onset_rate,danceability}` |
 | Fingerprint   | `ChromaprintFingerprintAnalyzer` (shells `fpcalc`)            | n/a — separate binary; AcoustID requires Chromaprint           |
 
-**Single-shot Essentia.** BPM, key and energy share one `essentia_streaming_extractor_music` run per track via `EssentiaAnalysisService`, which caches the parsed JSON keyed by `(path, last-write-time)`. Three forks would triple I/O for no benefit — Essentia computes all three dimensions on every invocation regardless of which one we ask for.
+**Single-shot Essentia.** BPM, key and energy share one `essentia_streaming_extractor_music` run per track via `EssentiaAnalysisService`, which caches the parsed JSON keyed by `(path, last-write-time)`. Essentia is always invoked with its built-in default tempo range (40-208) — the per-genre tempo hint is applied AFTER detection, not as a CLI argument. That keeps the cache key simple and removes one filesystem indirection (no transient profile YAML written per range).
+
+**Per-genre BPM tempo fold.** After Essentia returns, `EssentiaBpmAnalyzer` consults `ITempoRangeResolver` to look up the genre-resolved range:
+1. read the track's existing `TCON`/`GENRE` tag,
+2. normalise via `taxonomy.yaml` (e.g. `"Tech House"` → `"House"`),
+3. look the normalised genre up in `analysis.bpm.tempo_ranges_by_genre` (case-insensitive),
+4. fall back to `analysis.bpm.tempo_range_fallback` if no match — when that's null too, no fold is attempted and the raw value passes through for the pipeline-level snap.
+
+Fold algorithm per track:
+- `raw ∈ [min, max]` → `snap(raw)`; `WasSnapped` reflects whether the snap actually changed the value.
+- `raw < min` → fold via `raw × 2`, then snap; if the result is in range, accept it.
+- `raw > max` → fold via `raw / 2`, then snap; if the result is in range, accept it.
+- Folded-and-snapped value still out of range → return `snap(raw)` and set `IsForcedFallback`. The UI renders the BPM cell **dark blue** so the user sees the configured range and the detected tempo couldn't be reconciled — the value is the best raw signal, and the user should investigate whether the genre tag is wrong.
+
+DJ-convention edge cases resolve automatically:
+- 86 BPM DnB intro, genre = `Drum and Bass` `[130, 200]` → fold `×2` → 172 (DJ full-time convention).
+- 154 BPM DubStep, genre = `DubStep` `[50, 100]` → fold `÷2` → 77 (DJ half-time convention).
+
+This replaces the previous per-genre Essentia profile YAML mechanism and the `post: double` / `post: halve_above_100` YAML hints — those vocabulary items have been removed from `tagger.yaml`. The fold is symmetric and self-correcting; the dark-blue marker surfaces unresolvable disagreement instead of silently forcing a wrong octave.
 
 **Why Essentia over aubio + keyfinder-cli.** Essentia's tempo tracker exposes a real confidence (`bpm_histogram_first_peak_weight`) and its histogram surfaces tempo ambiguity (half/double-time) where aubio silently picked one octave. The EDMA key profile is trained on the Beatport corpus and consistently outperforms libKeyFinder's Shaath profile on DJ-oriented material. Combined, one tool replaces three and produces strictly more information per run.
 

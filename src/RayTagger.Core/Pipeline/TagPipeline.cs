@@ -210,7 +210,9 @@ public sealed class TagPipeline : ITagPipeline
         AnalysisResult analysis = AnalysisResult.Empty;
         try
         {
-            analysis = await _analysisRunner.RunAsync(file, cancellationToken).ConfigureAwait(false);
+            // existing is passed through so the runner can resolve per-track hints (e.g.
+            // tempo-range from the genre tag) before kicking off the native analyzers.
+            analysis = await _analysisRunner.RunAsync(file, existing, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ShouldIsolate(ex))
         {
@@ -297,15 +299,20 @@ public sealed class TagPipeline : ITagPipeline
         // TagFieldSource.Rules so the writer treats them as user-declared intent and overwrites
         // the existing tag — otherwise skip_if_present would silently preserve "126.01" on disk
         // while the UI showed the rounded "126".
-        var bpmWasSnapped = false;
+        //
+        // Capture the pre-snap source so we can attribute the analyzer's own snap/forced-fallback
+        // flags only when the analyzer's value actually made it through the merge. (Existing-tag
+        // values that skip_if_present preserved should not inherit analyzer-side highlights.)
+        var preSnapSource = resolved.Bpm.Source;
+        var pipelineSnapFired = false;
         if (resolved.Bpm.Value is double finalBpm)
         {
             var snapped = RayTagger.Core.Analysis.BpmSnapper.Snap(
                 finalBpm,
                 options.Analysis.Bpm.SnapTolerancePercent,
                 options.Analysis.Bpm.SnapStep,
-                out bpmWasSnapped);
-            if (bpmWasSnapped)
+                out pipelineSnapFired);
+            if (pipelineSnapFired)
             {
                 resolved = resolved with
                 {
@@ -313,6 +320,9 @@ public sealed class TagPipeline : ITagPipeline
                 };
             }
         }
+        var analyzerProducedFinal = preSnapSource == TagFieldSource.Analysis;
+        var bpmWasSnapped = pipelineSnapFired || (analyzerProducedFinal && analysis.Bpm.WasSnapped);
+        var bpmIsForcedFallback = analyzerProducedFinal && analysis.Bpm.IsForcedFallback;
 
         return new PipelineOutcome(
             file,
@@ -323,7 +333,8 @@ public sealed class TagPipeline : ITagPipeline
             Errors: errors,
             PreMapResolved: preMapResolved,
             ExistingAtScan: existing,
-            BpmWasSnapped: bpmWasSnapped);
+            BpmWasSnapped: bpmWasSnapped,
+            BpmIsForcedFallback: bpmIsForcedFallback);
     }
 
     private static bool HasAnyNonExistingField(ResolvedTrackTags resolved) =>

@@ -190,4 +190,118 @@ public class TaggerOptionsLoaderTests
         // ConfigurationException.
         act.Should().Throw<ConfigurationException>();
     }
+
+    [Fact]
+    public void Deserialises_tempo_ranges_by_genre_block_with_flow_style()
+    {
+        // Flow-style mapping (inline {min: ..., max: ...}) is what the example.yaml uses for
+        // readability. Pins both the binding and the case-insensitive comparer fixup that
+        // NormaliseDictionaryComparers applies post-deserialisation.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              bpm:
+                provider: essentia
+                tempo_ranges_by_genre:
+                  house:         { min: 110, max: 140 }
+                  techno:        { min: 110, max: 150 }
+                  drum and bass: { min: 130, max: 200 }
+                tempo_range_fallback: { min: 60, max: 200 }
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Analysis.Bpm.TempoRangesByGenre.Should().HaveCount(3);
+        options.Analysis.Bpm.TempoRangesByGenre["house"].Min.Should().Be(110);
+        options.Analysis.Bpm.TempoRangesByGenre["house"].Max.Should().Be(140);
+        options.Analysis.Bpm.TempoRangesByGenre["drum and bass"].Max.Should().Be(200);
+
+        // Case-insensitive lookup must work after deserialisation — the post-load fixup rebuilds
+        // the dict with OrdinalIgnoreCase comparer (YamlDotNet drops the POCO's pre-set comparer).
+        options.Analysis.Bpm.TempoRangesByGenre.ContainsKey("HOUSE").Should().BeTrue();
+        options.Analysis.Bpm.TempoRangesByGenre.ContainsKey("House").Should().BeTrue();
+
+        options.Analysis.Bpm.TempoRangeFallback.Should().NotBeNull();
+        options.Analysis.Bpm.TempoRangeFallback!.Min.Should().Be(60);
+        options.Analysis.Bpm.TempoRangeFallback.Max.Should().Be(200);
+    }
+
+    [Fact]
+    public void Empty_tempo_ranges_by_genre_is_valid_and_leaves_dict_empty()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Analysis.Bpm.TempoRangesByGenre.Should().BeEmpty();
+        options.Analysis.Bpm.TempoRangeFallback.Should().BeNull();
+    }
+
+    [Fact]
+    public void Tempo_range_with_min_gte_max_fails_validation()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              bpm:
+                provider: essentia
+                tempo_ranges_by_genre:
+                  house: { min: 150, max: 120 }
+            """;
+
+        var act = () => TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        act.Should().Throw<ConfigurationException>()
+            .WithMessage("*must be strictly less than max*");
+    }
+
+    [Fact]
+    public void Tempo_range_with_only_min_or_only_max_fails_validation()
+    {
+        // Mixed configuration — one of min/max missing — is a misconfiguration the validator
+        // should surface clearly.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              bpm:
+                provider: essentia
+                tempo_ranges_by_genre:
+                  house: { min: 110 }
+            """;
+
+        var act = () => TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        act.Should().Throw<ConfigurationException>()
+            .WithMessage("*min and max must be set together*");
+    }
+
+    [Fact]
+    public void Tempo_range_outside_plausible_bounds_fails_validation()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              bpm:
+                provider: essentia
+                tempo_ranges_by_genre:
+                  techno: { min: 5, max: 400 }
+            """;
+
+        var act = () => TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        act.Should().Throw<ConfigurationException>()
+            .WithMessage("*outside plausible musical bounds*");
+    }
 }

@@ -100,8 +100,49 @@ public static class TaggerOptionsLoader
 
         NormalisePaths(options, configDirectory);
         LoadTaxonomyIfConfigured(options, sourceDescription);
+        LoadEnergyCalibrationIfConfigured(options, sourceDescription);
+        NormaliseDictionaryComparers(options);
 
         return options;
+    }
+
+    /// <summary>
+    /// YamlDotNet's default mapping deserialiser allocates a fresh <see cref="Dictionary{TKey,TValue}"/>
+    /// with the ordinal-comparer rather than copying values into the POCO's pre-initialised
+    /// (case-insensitive) instance. That silently breaks lookups like genre tag "House" against
+    /// config key "house". Rebuild the affected dictionaries here so downstream consumers can rely
+    /// on case-insensitive semantics without each having to redo the workaround.
+    /// </summary>
+    private static void NormaliseDictionaryComparers(TaggerOptions options)
+    {
+        options.Analysis.Bpm.TempoRangesByGenre = new Dictionary<string, RayTagger.Core.Models.BpmTempoRange>(
+            options.Analysis.Bpm.TempoRangesByGenre,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Loads the external energy calibration profile when
+    /// <see cref="EnergyAnalyzerOptions.CalibrationFile"/> is set and the file exists. A missing
+    /// file is not an error — the analyzer falls back to the built-in defaults. Malformed YAML
+    /// surfaces as a <see cref="ConfigurationException"/> so the user fixes it before the next scan.
+    /// </summary>
+    private static void LoadEnergyCalibrationIfConfigured(TaggerOptions options, string sourceDescription)
+    {
+        var path = options.Analysis.Energy.CalibrationFile;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return;
+        }
+        try
+        {
+            options.Analysis.Energy.LoadedCalibration = EnergyCalibrationProfileLoader.Load(path);
+        }
+        catch (ConfigurationException ex)
+        {
+            throw new ConfigurationException(
+                $"Energy calibration file referenced by {sourceDescription} failed to load: {ex.Message}",
+                ex);
+        }
     }
 
     /// <summary>
@@ -173,6 +214,12 @@ public static class TaggerOptionsLoader
         if (!string.IsNullOrWhiteSpace(options.Taxonomy.File))
         {
             options.Taxonomy.File = PathNormalizer.Normalize(options.Taxonomy.File, configDirectory);
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.Analysis.Energy.CalibrationFile))
+        {
+            options.Analysis.Energy.CalibrationFile =
+                PathNormalizer.Normalize(options.Analysis.Energy.CalibrationFile, configDirectory);
         }
     }
 }

@@ -110,6 +110,40 @@ public class EssentiaJsonParserTests
         parsed.KeyScale.Should().BeNull();
         parsed.KeyStrength.Should().BeNull();
         parsed.SpectralEnergy.Should().BeNull();
+        parsed.AverageLoudness.Should().BeNull();
+        parsed.SpectralFlux.Should().BeNull();
+        parsed.OnsetRate.Should().BeNull();
+        parsed.Danceability.Should().BeNull();
+        parsed.BeatsLoudness.Should().BeNull();
+    }
+
+    [Fact]
+    public void Reads_all_five_energy_composite_features()
+    {
+        // Shape mirrors a real essentia_streaming_extractor_music JSON: flux/beats_loudness are
+        // frame-aggregated (mean/min/max/var); average_loudness/onset_rate/danceability are bare
+        // scalars at the top level of their parent section.
+        const string json = """
+            {
+              "lowlevel": {
+                "average_loudness": 0.936,
+                "spectral_flux":    { "mean": 0.118, "var": 0.011, "min": 0.0001, "max": 0.49 }
+              },
+              "rhythm": {
+                "onset_rate":     6.51,
+                "danceability":   1.92,
+                "beats_loudness": { "mean": 0.126, "var": 0.005, "min": 0.0, "max": 0.25 }
+              }
+            }
+            """;
+
+        var parsed = EssentiaJsonParser.ParseString(json);
+
+        parsed.AverageLoudness.Should().BeApproximately(0.936, 1e-4);
+        parsed.SpectralFlux.Should().BeApproximately(0.118, 1e-4);
+        parsed.OnsetRate.Should().BeApproximately(6.51, 1e-3);
+        parsed.Danceability.Should().BeApproximately(1.92, 1e-3);
+        parsed.BeatsLoudness.Should().BeApproximately(0.126, 1e-4);
     }
 
     [Fact]

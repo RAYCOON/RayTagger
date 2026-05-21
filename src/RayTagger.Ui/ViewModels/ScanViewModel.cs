@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Collections;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -67,6 +68,18 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     public ObservableCollection<TrackOutcomeViewModel> Outcomes { get; } = [];
 
     /// <summary>
+    /// Per-column filter VM — owns the 17 filter strings, the <see cref="DataGridCollectionView"/>,
+    /// and the ClearFilters command. The DataGrid binds <c>ItemsSource</c> to <c>Filters.View</c>
+    /// and the inline header TextBoxes to <c>Filters.Genre</c>, <c>Filters.Bpm</c>, …
+    /// </summary>
+    public ColumnFilterViewModel Filters { get; }
+
+    /// <summary>
+    /// Alias for <c>Filters.View</c> — kept so XAML doesn't have to go through the indirection.
+    /// </summary>
+    public DataGridCollectionView FilteredOutcomes => Filters.View;
+
+    /// <summary>
     /// Flat list of every row whose proposed tags differ from disk. Bound by the Rule Editor's
     /// side-panel for the "where exactly do my changes apply" view. Rebuilt after every scan-row
     /// add, after a Live-Preview rule edit, and after Apply/Revert flips a row's diff state.
@@ -83,6 +96,11 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         _reader = reader;
         _ruleEngine = ruleEngine;
         _logger = logger;
+
+        Filters = new ColumnFilterViewModel(Outcomes);
+        // "Alle anwenden" iterates the visible subset, so its CanExecute must re-evaluate when
+        // the user's filter changes (button greys out if no pending row passes the filter).
+        Filters.FilterChanged += (_, _) => ApplyAllChangedCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>
@@ -399,11 +417,15 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     /// Applies every row whose status is "Würde ändern" sequentially. The caller (MainWindow
     /// code-behind) is responsible for confirming with the user before invoking this — the
     /// command itself trusts that the user has already agreed.
+    /// Iterates <see cref="FilteredOutcomes"/> so an active column filter scopes the batch to
+    /// what the user actually sees ("filter what you bulk-apply"). Rows hidden by the filter
+    /// stay untouched even if they're pending.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanApplyAllChanged))]
     private async Task ApplyAllChangedAsync()
     {
-        var pending = Outcomes.Where(o => o.CanApply).ToList();
+        var pending = FilteredOutcomes.OfType<TrackOutcomeViewModel>()
+            .Where(o => o.CanApply).ToList();
         if (pending.Count == 0)
         {
             StatusMessage = "Keine ausstehenden Änderungen.";
@@ -468,7 +490,8 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         }
     }
 
-    private bool CanApplyAllChanged() => !IsBusy && Outcomes.Any(o => o.CanApply);
+    private bool CanApplyAllChanged() => !IsBusy
+        && FilteredOutcomes.OfType<TrackOutcomeViewModel>().Any(o => o.CanApply);
 
     /// <summary>
     /// Scan can only fire once Discovery has settled — running both in parallel against the same

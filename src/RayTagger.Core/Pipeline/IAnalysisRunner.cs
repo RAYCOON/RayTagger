@@ -8,9 +8,16 @@ namespace RayTagger.Core.Pipeline;
 /// <see cref="AnalysisResult"/> rather than throwing — that way one bad analyzer doesn't blow up
 /// the whole pipeline.
 /// </summary>
+/// <remarks>
+/// The <c>existing</c> parameter is the disk-read tag snapshot from the preceding pipeline stage;
+/// runners use it to resolve hints (e.g. per-genre BPM ranges) before kicking off native tools.
+/// </remarks>
 public interface IAnalysisRunner
 {
-    Task<AnalysisResult> RunAsync(TrackFile file, CancellationToken cancellationToken = default);
+    Task<AnalysisResult> RunAsync(
+        TrackFile file,
+        TrackTags existing,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -21,6 +28,9 @@ public sealed class NoopAnalysisRunner : IAnalysisRunner
 {
     public static NoopAnalysisRunner Instance { get; } = new();
 
-    public Task<AnalysisResult> RunAsync(TrackFile file, CancellationToken cancellationToken = default) =>
+    public Task<AnalysisResult> RunAsync(
+        TrackFile file,
+        TrackTags existing,
+        CancellationToken cancellationToken = default) =>
         Task.FromResult(AnalysisResult.Empty);
 }

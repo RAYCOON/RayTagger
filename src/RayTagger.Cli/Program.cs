@@ -33,12 +33,17 @@ internal static class Program
         var setupCommand = setupOpts.Build((parseResult, ct) =>
             SetupHandler.RunAsync(parseResult, setupOpts, ct));
 
+        var calibrateEnergyOpts = new CalibrateEnergyCommandOptions();
+        var calibrateEnergyCommand = calibrateEnergyOpts.Build((parseResult, ct) =>
+            CalibrateEnergyHandler.RunAsync(parseResult, calibrateEnergyOpts, ct));
+
         return new RootCommand("RayTagger — automatic music file tagger (MP3/FLAC/AIFF).")
         {
             scanCommand,
             explainCommand,
             restoreCommand,
             setupCommand,
+            calibrateEnergyCommand,
         };
     }
 }

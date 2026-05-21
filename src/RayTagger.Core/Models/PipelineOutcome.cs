@@ -44,6 +44,12 @@ public sealed record MappingRuleHit(string RuleName, IReadOnlyList<string> Chang
 /// <c>analysis.bpm.snap_tolerance_percent</c> tolerance and got rounded to an integer. Drives the
 /// UI's dark-red highlight so the user can see which BPMs are "corrected" rather than verbatim.
 /// </param>
+/// <param name="BpmIsForcedFallback">
+/// True when the BPM analyzer's genre-range fold (raw × 2 / raw ÷ 2 then snap) failed to land
+/// the value back inside the configured genre interval. The cell is then rendered dark-blue so
+/// the user sees that the configured range and the detected tempo couldn't be reconciled — the
+/// written value is <c>snap(raw)</c>, the best raw signal available.
+/// </param>
 public sealed record PipelineOutcome(
     TrackFile File,
     ResolvedTrackTags Resolved,
@@ -53,4 +59,5 @@ public sealed record PipelineOutcome(
     IReadOnlyList<StageError> Errors,
     ResolvedTrackTags? PreMapResolved = null,
     TrackTags? ExistingAtScan = null,
-    bool BpmWasSnapped = false);
+    bool BpmWasSnapped = false,
+    bool BpmIsForcedFallback = false);

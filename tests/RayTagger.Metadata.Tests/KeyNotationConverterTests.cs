@@ -106,4 +106,37 @@ public class KeyNotationConverterTests
         result!.Standard.Should().Be(expectedStd);
         result.Camelot.Should().Be(expectedCam);
     }
+
+    // ===== CamelotSortKey =========================================================================
+
+    [Theory]
+    [InlineData("1A", "01A")]
+    [InlineData("9B", "09B")]
+    [InlineData("12A", "12A")]
+    [InlineData("12B", "12B")]
+    [InlineData("10A", "10A")]
+    [InlineData("5a", "05A")]   // lower-case letter normalised to upper
+    [InlineData("11b", "11B")]
+    public void CamelotSortKey_zero_pads_single_digit_numbers(string camelot, string expectedSortKey)
+    {
+        KeyNotationConverter.CamelotSortKey(camelot).Should().Be(expectedSortKey);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CamelotSortKey_null_or_whitespace_returns_null(string? value)
+    {
+        KeyNotationConverter.CamelotSortKey(value).Should().BeNull();
+    }
+
+    [Fact]
+    public void CamelotSortKey_passes_unexpected_shapes_through_unchanged()
+    {
+        // "12C" isn't a real Camelot code — pass through rather than silently mis-sorting.
+        KeyNotationConverter.CamelotSortKey("12C").Should().Be("12C");
+        // Single char without A/B suffix — degenerate, pass through.
+        KeyNotationConverter.CamelotSortKey("A").Should().Be("A");
+    }
 }

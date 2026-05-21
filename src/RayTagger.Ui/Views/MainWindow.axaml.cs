@@ -63,6 +63,75 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Opens the folder picker for the calibration source, runs the calibration via the VM, and
+    /// shows a result dialog with the before/after anchors. Lives in code-behind (not the VM)
+    /// because the result dialog needs a <see cref="Window"/> owner.
+    /// </summary>
+    private async void OnCalibrateEnergyClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+
+        var outcome = await vm.CalibrateEnergyAsync(this);
+        if (outcome is null) return;
+
+        string title;
+        string body;
+        if (outcome.Report.Succeeded)
+        {
+            title = "Energie-Profil eingefroren";
+            body = BuildSuccessMessage(outcome);
+        }
+        else
+        {
+            title = "Kalibrierung fehlgeschlagen";
+            body = outcome.Report.AbortReason ?? "Unbekannter Fehler.";
+        }
+
+        // Reuse ConfirmationDialog as a simple info dialog — confirm button = "Schließen", cancel
+        // hidden by reusing same text. Avalonia ships no MessageBox; this is the path of least
+        // resistance until we add a dedicated result dialog.
+        await ConfirmationDialog.ShowAsync(this, title, body,
+            confirmText: "OK", cancelText: "Schließen");
+    }
+
+    private static string BuildSuccessMessage(RayTagger.Ui.Services.EnergyCalibrationOutcome outcome)
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        var p = outcome.Report.Profile!;
+        var prev = outcome.PreviousProfile;
+        var sb = new System.Text.StringBuilder();
+        var failTail = outcome.Report.FailureCount > 0
+            ? $", {outcome.Report.FailureCount} fehlgeschlagen"
+            : "";
+        sb.AppendLine(string.Create(ci, $"Quelle: {outcome.Report.SuccessCount} Tracks erfolgreich analysiert{failTail}."));
+        sb.AppendLine(string.Create(ci, $"Gespeichert: {outcome.ProfilePath}"));
+        sb.AppendLine();
+        sb.AppendLine("Neue Schwellen (Floor → Ceiling)" + (prev is null ? ":" : "  vs. vorher:"));
+        Row("spectral_flux",    p.SpectralFlux,    prev?.SpectralFlux);
+        Row("beats_loudness",   p.BeatsLoudness,   prev?.BeatsLoudness);
+        Row("onset_rate",       p.OnsetRate,       prev?.OnsetRate);
+        Row("danceability",     p.Danceability,    prev?.Danceability);
+        Row("average_loudness", p.AverageLoudness, prev?.AverageLoudness);
+        sb.AppendLine();
+        sb.AppendLine("Hinweis: bereits geschriebene ENERGYLEVEL-Tags bleiben unverändert. " +
+            "Erneut taggen → Scan starten und „Alle anwenden“ klicken.");
+        return sb.ToString();
+
+        void Row(string name, RayTagger.Core.Configuration.FeatureAnchor now, RayTagger.Core.Configuration.FeatureAnchor? prev)
+        {
+            if (prev is null)
+            {
+                sb.AppendLine(string.Create(ci, $"  {name,-18} {now.Floor,8:F4} → {now.Ceiling,8:F4}"));
+            }
+            else
+            {
+                sb.AppendLine(string.Create(ci,
+                    $"  {name,-18} {now.Floor,8:F4} → {now.Ceiling,8:F4}   ({prev.Floor:F4} → {prev.Ceiling:F4})"));
+            }
+        }
+    }
+
+    /// <summary>
     /// Confirms before kicking off the batch Apply. Counting pending rows here (rather than in
     /// the VM) keeps the message specific — "47 Dateien werden geschrieben" beats "alle Änderungen
     /// werden geschrieben" — without coupling the VM to a dialog abstraction.

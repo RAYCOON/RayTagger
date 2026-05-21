@@ -1,3 +1,5 @@
+using RayTagger.Core.Models;
+
 namespace RayTagger.Core.Configuration;
 
 /// <summary>
@@ -162,11 +164,86 @@ public sealed class BpmAnalyzerOptions : AnalyzerOptions
     /// left it alone (drift to 173 = 0.28%, above any reasonable tolerance). Must be &gt; 0.
     /// </summary>
     public double SnapStep { get; set; } = 0.5;
+
+    /// <summary>
+    /// Per-genre BPM ranges. The key is a canonical genre name (matched against the genre
+    /// resolved from <see cref="RayTagger.Core.Mapping.Taxonomy.NormaliseByAlias"/> — e.g.
+    /// <c>"Tech House"</c> normalises to <c>"House"</c> and looks up the <c>"House"</c> entry).
+    /// Lookup is case-insensitive. When the resolved genre has an entry here, Essentia is
+    /// invoked with a per-run profile pinning <c>minTempo</c>/<c>maxTempo</c> to that range —
+    /// which eliminates half/double-time errors for genre-typed material. When no entry
+    /// matches, <see cref="TempoRangeFallback"/> is used; when that's also <c>null</c>,
+    /// Essentia falls back to its own default range (40–208).
+    /// </summary>
+    public Dictionary<string, BpmTempoRange> TempoRangesByGenre { get; set; }
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Fallback range used when no entry in <see cref="TempoRangesByGenre"/> matches the track's
+    /// genre. <c>null</c> = no range, Essentia uses its own default. Set this only if your
+    /// library has a known overall tempo envelope that holds even for un-genre-tagged tracks.
+    /// </summary>
+    public BpmTempoRange? TempoRangeFallback { get; set; }
 }
 
 public sealed class EnergyAnalyzerOptions : AnalyzerOptions
 {
     public string Scale { get; set; } = "1-10";
+
+    /// <summary>
+    /// Path to a frozen calibration profile file. Default: <c>./energy-calibration.yaml</c>
+    /// (relative to tagger.yaml). Set to empty string to disable calibration and always use the
+    /// built-in defaults. The file is written by <c>tagger calibrate-energy</c> or the UI
+    /// "Calibrate Energy" button — never hand-maintained.
+    /// </summary>
+    public string CalibrationFile { get; set; } = "./energy-calibration.yaml";
+
+    /// <summary>
+    /// Loaded calibration profile (set by <c>TaggerOptionsLoader</c> after parsing
+    /// <see cref="CalibrationFile"/>). <c>null</c> when the file is missing or empty —
+    /// the analyzer falls back to the built-in defaults in that case.
+    /// </summary>
+    [YamlDotNet.Serialization.YamlIgnore]
+    public EnergyCalibrationProfile? LoadedCalibration { get; set; }
+}
+
+/// <summary>
+/// Frozen per-library calibration profile for <see cref="EnergyAnalyzerOptions"/>. Each
+/// <see cref="FeatureAnchor"/> defines the 10th/90th-percentile range of one of the five
+/// composite features observed across the source folder. Values outside the anchors clamp;
+/// values within map linearly to [0,1] for the composite.
+/// </summary>
+/// <remarks>
+/// "Frozen" means: once written, the profile persists in <c>tagger.yaml</c> verbatim until the
+/// user explicitly re-calibrates. Re-tagging already-written <c>TXXX:ENERGYLEVEL</c> frames to
+/// match a new profile is the user's responsibility — Tagger never silently rewrites tags.
+/// </remarks>
+public sealed class EnergyCalibrationProfile
+{
+    public FeatureAnchor SpectralFlux { get; set; } = new();
+    public FeatureAnchor BeatsLoudness { get; set; } = new();
+    public FeatureAnchor OnsetRate { get; set; } = new();
+    public FeatureAnchor Danceability { get; set; } = new();
+    public FeatureAnchor AverageLoudness { get; set; } = new();
+
+    /// <summary>Number of tracks that contributed to the profile (post-failure filter).</summary>
+    public int SampleCount { get; set; }
+
+    /// <summary>UTC timestamp when the profile was generated. ISO 8601 in YAML.</summary>
+    public DateTime GeneratedAt { get; set; }
+
+    /// <summary>Absolute path of the source folder used to generate the profile (diagnostic only).</summary>
+    public string SourcePath { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Linear-normalisation anchors for one feature. Values &lt;= <see cref="Floor"/> clamp to 0,
+/// values &gt;= <see cref="Ceiling"/> clamp to 1, anything in between scales linearly.
+/// </summary>
+public sealed class FeatureAnchor
+{
+    public double Floor { get; set; }
+    public double Ceiling { get; set; }
 }
 
 public sealed class LookupOptions

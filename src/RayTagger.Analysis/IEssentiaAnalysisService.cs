@@ -15,5 +15,13 @@ public interface IEssentiaAnalysisService
     /// JSON output, or <c>null</c> when the binary is missing or the run failed unrecoverably.
     /// Per-file failures must not abort the scan — callers receive a <c>null</c> result.
     /// </summary>
+    /// <param name="file">Audio file to analyse.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <remarks>
+    /// Essentia is always invoked with its built-in tempo range (40-208). Genre-specific tempo
+    /// hints are applied AFTER detection by <see cref="EssentiaBpmAnalyzer"/>; no per-range
+    /// profile YAML is written. The cache is keyed by file path + mtime — re-tagged files
+    /// re-analyse within the same process.
+    /// </remarks>
     Task<EssentiaResult?> RunAsync(TrackFile file, CancellationToken cancellationToken = default);
 }
