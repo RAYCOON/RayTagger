@@ -224,6 +224,32 @@ lookup:
 mapping:
   rules_file: "./mappings.yaml"
 
+  # Source-priority tiers used by TaxonomyGenreResolver when several candidates
+  # match the same taxonomy entry. Higher tier wins; ties broken by confidence,
+  # then YAML order of the taxonomy entry. Defaults (shown below) reflect the
+  # design in docs/PLAN_GENRE_CLASSIFICATION.md §4.0d.
+  #
+  # Buckets (which candidate falls into which bucket) are hardcoded — only the
+  # numeric weights are tunable. Range: [0, 1000].
+  #
+  #   provider                       MusicBrainz / Discogs / Last.fm / AcoustID
+  #   classifier_aggregated          TF model + §4.0c bucket sum cleared min_total
+  #   classifier_aggregated_fallback TF model with no bucket clearing min_total
+  #                                  (top raw class kept as a hint, lower trust)
+  #   classifier_tf_raw              Raw TF class without aggregation context
+  #   classifier_other               Any other IGenreClassifier (e.g. future ones)
+  #   classifier_heuristic           Tier-3 rule-based heuristic
+  #
+  # Common tweak: bump classifier_heuristic above classifier_tf_raw when you
+  # trust the hand-tuned rules more than a raw TF prediction.
+  source_priority:
+    provider:                       100
+    classifier_aggregated:           80
+    classifier_aggregated_fallback:  70
+    classifier_tf_raw:               60
+    classifier_other:                55
+    classifier_heuristic:            50
+
 # --- 6. Tag writing ----------------------------------------------------------
 write:
   dry_run: false                     # CLI --dry-run overrides this

@@ -22,10 +22,32 @@ internal static class TaggerOptionsValidator
         ValidateScan(options.Scan, errors);
         ValidateAnalysis(options.Analysis, errors);
         ValidateLookup(options.Lookup, errors);
+        ValidateMapping(options.Mapping, errors);
         ValidateSort(options.Sort, errors);
         ValidateWrite(options.Write, errors);
 
         return errors;
+    }
+
+    private static void ValidateMapping(MappingOptions mapping, List<ConfigurationError> errors)
+    {
+        var sp = mapping.SourcePriority;
+        ValidateTier(sp.Provider, "mapping.source_priority.provider", errors);
+        ValidateTier(sp.ClassifierAggregated, "mapping.source_priority.classifier_aggregated", errors);
+        ValidateTier(sp.ClassifierAggregatedFallback, "mapping.source_priority.classifier_aggregated_fallback", errors);
+        ValidateTier(sp.ClassifierTfRaw, "mapping.source_priority.classifier_tf_raw", errors);
+        ValidateTier(sp.ClassifierOther, "mapping.source_priority.classifier_other", errors);
+        ValidateTier(sp.ClassifierHeuristic, "mapping.source_priority.classifier_heuristic", errors);
+    }
+
+    private static void ValidateTier(int value, string path, List<ConfigurationError> errors)
+    {
+        if (value is < 0 or > 1000)
+        {
+            errors.Add(new ConfigurationError(
+                path,
+                $"Must be in [0, 1000], got {value}. Defaults span 50-100; the range gives 10× headroom for unusual policies."));
+        }
     }
 
     private static void ValidateWrite(WriteOptions write, List<ConfigurationError> errors)

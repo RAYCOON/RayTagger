@@ -289,7 +289,8 @@ public sealed class TagPipeline : ITagPipeline
             options.Read.ExistingTagsPolicy,
             resolverActive ? options.Taxonomy.Loaded : null,
             resolverActive ? _genreResolver : null,
-            providerTrace);
+            providerTrace,
+            options.Mapping.SourcePriority);
         if (classifierTrace is not null)
         {
             resolved = resolved with { ClassifierTrace = classifierTrace };

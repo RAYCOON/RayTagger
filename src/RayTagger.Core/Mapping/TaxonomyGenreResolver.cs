@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
+using RayTagger.Core.Configuration;
 using RayTagger.Core.Models;
 
 namespace RayTagger.Core.Mapping;
@@ -30,23 +31,39 @@ public sealed class TaxonomyGenreResolver
         IReadOnlyList<GenreCandidate> subGenreCandidates,
         Taxonomy taxonomy,
         string? existingGenre,
-        string? existingSubgenre)
+        string? existingSubgenre,
+        SourcePriorityOptions? sourcePriority = null)
     {
         ArgumentNullException.ThrowIfNull(genreCandidates);
         ArgumentNullException.ThrowIfNull(subGenreCandidates);
         ArgumentNullException.ThrowIfNull(taxonomy);
 
         var compiled = _cache.GetValue(taxonomy, CompiledTaxonomy.Build);
+        var priorityOpts = sourcePriority ?? SourcePriorityOptions.Defaults;
 
-        // Step 1: walk candidates in confidence order, find the first one that matches at least
-        // one taxonomy genre. Trace every inspected candidate (even those that didn't match) so
-        // the UI can show "tried 3, none matched" debug info.
+        // Step 0: source-weighted re-ordering (B6.6 + B6.6.1). Heuristic confidence (average
+        // of 7 feature scores in [0,1]) and TF-aggregated confidence (softmax mass summed by
+        // taxonomy parent, ~0.1-0.5 for clear winners) live on different scales — sorting
+        // purely by Confidence is unfair to TF. Tier values come from
+        // <see cref="SourcePriorityOptions"/> (configurable per tagger.yaml, see §4.0d);
+        // defaults match the hardcoded table from B6.6.
+        var sortedCandidates = genreCandidates
+            .Select((c, idx) => (Candidate: c, OriginalIndex: idx))
+            .OrderByDescending(t => SourcePriority(t.Candidate.Source, priorityOpts))
+            .ThenByDescending(t => t.Candidate.Confidence)
+            .ThenBy(t => t.OriginalIndex)
+            .Select(t => t.Candidate)
+            .ToList();
+
+        // Step 1: walk candidates in (source-priority, confidence) order, find the first one
+        // that matches at least one taxonomy genre. Trace every inspected candidate (even
+        // those that didn't match) so the UI can show "tried 3, none matched" debug info.
         var trace = new List<CandidateTraceEntry>();
         string? chosenGenre = null;
         string gcRest = string.Empty;
         GenreCandidate? matchedCandidate = null;
 
-        foreach (var gc in genreCandidates)
+        foreach (var gc in sortedCandidates)
         {
             var genreHits = compiled.MatchGenres(gc.Value);
             if (genreHits.Count == 0)
@@ -105,15 +122,16 @@ public sealed class TaxonomyGenreResolver
                 ? chosenGenre
                 : null;
         }
-        else if (string.IsNullOrEmpty(existingGenre) && genreCandidates.Count > 0)
+        else if (string.IsNullOrEmpty(existingGenre) && sortedCandidates.Count > 0)
         {
-            // Fallback: no taxonomy match anywhere, but the slot is empty — take the top-1 raw
-            // value so the user gets *something* (which they can later add to the taxonomy or
+            // Fallback: no taxonomy match anywhere, but the slot is empty — take the top-1
+            // candidate from the SORTED list (highest source-priority + highest confidence)
+            // so the user gets *something* (which they can later add to the taxonomy or
             // rewrite via a mapping rule). Subgenre has no fallback — it has no anchor.
-            proposedGenre = genreCandidates[0].Value;
+            proposedGenre = sortedCandidates[0].Value;
             fallbackApplied = true;
             // Surface the source so callers can attribute the value (UI, write-stage confidence).
-            matchedCandidate = genreCandidates[0];
+            matchedCandidate = sortedCandidates[0];
         }
         else
         {
@@ -137,6 +155,54 @@ public sealed class TaxonomyGenreResolver
             fallbackApplied,
             matchedCandidate,
             trace);
+    }
+
+    /// <summary>
+    /// Source-priority tier for ordering candidates before the first-match-wins walk. Higher
+    /// number = considered first. Tier values come from <paramref name="opts"/> so users can
+    /// override the defaults in <c>tagger.yaml</c> under <c>mapping.source_priority</c>.
+    /// See <c>docs/PLAN_GENRE_CLASSIFICATION.md §4.0d</c> for rationale.
+    /// </summary>
+    /// <remarks>
+    /// Bucket assignment is hardcoded — only the tier VALUES are tunable. To add new buckets
+    /// (e.g. per-provider priorities) we'd need pattern-based config; that's deferred per §5.7.
+    /// </remarks>
+    internal static int SourcePriority(string source, SourcePriorityOptions opts)
+    {
+        ArgumentNullException.ThrowIfNull(opts);
+
+        if (string.IsNullOrEmpty(source))
+        {
+            // Unknown / empty source — treat as fallback tier so it doesn't accidentally
+            // beat provider hits without explicit policy.
+            return opts.ClassifierAggregatedFallback;
+        }
+        // Check the more-specific suffix first. Today `:aggregated-fallback` doesn't end with
+        // `:aggregated` (it ends with `-fallback`), so the order accidentally works either way,
+        // but a future `:aggregated-strict`-style suffix would silently fall through to the
+        // provider default if `:aggregated` were checked first.
+        if (source.EndsWith(":aggregated-fallback", StringComparison.Ordinal))
+        {
+            return opts.ClassifierAggregatedFallback;
+        }
+        if (source.EndsWith(":aggregated", StringComparison.Ordinal))
+        {
+            return opts.ClassifierAggregated;
+        }
+        if (source.StartsWith("classifier:essentia-tf-", StringComparison.Ordinal))
+        {
+            return opts.ClassifierTfRaw;
+        }
+        if (source.StartsWith("classifier:heuristic", StringComparison.Ordinal))
+        {
+            return opts.ClassifierHeuristic;
+        }
+        if (source.StartsWith("classifier:", StringComparison.Ordinal))
+        {
+            return opts.ClassifierOther;
+        }
+        // Anything else (acoustid/musicbrainz/discogs/lastfm/...) treated as provider.
+        return opts.Provider;
     }
 
     /// <summary>

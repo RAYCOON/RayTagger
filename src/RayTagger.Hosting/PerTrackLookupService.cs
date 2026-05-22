@@ -117,7 +117,8 @@ public sealed class PerTrackLookupService : IPerTrackLookupService
             lookupResult.SubGenreCandidates,
             options.Taxonomy.Loaded,
             existing.Genre,
-            existing.SubGenre);
+            existing.SubGenre,
+            options.Mapping.SourcePriority);
 
         var rawCount = lookupResult.GenreCandidates.Count + lookupResult.SubGenreCandidates.Count;
         var apiFoundTrack = rawCount > 0

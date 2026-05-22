@@ -508,6 +508,49 @@ The "missed" labels are not model deficiencies — they're either:
 
 Re-run the analyzer when adding a new TF model, when editing `taxonomy.yaml`, or when modifying `remap/*.json` to catch regressions.
 
+### 4.0d Source-weighted resolution
+
+**Motivation.** Heuristic and TF classifier confidences live on different mathematical scales:
+
+| Source | Confidence semantic | Typical range |
+| --- | --- | --- |
+| Heuristic | Arithmetic mean of 7 feature scores ∈ [0,1] | 0.5 – 0.85 |
+| TF aggregated (§4.0c) | Softmax mass summed by taxonomy parent | 0.1 – 0.5 |
+| TF raw top-1 | Single-class softmax probability | 0.05 – 0.6 |
+| Provider (musicbrainz / discogs / acoustid / lastfm) | API-internal confidence or 1.0 | 0.6 – 1.0 |
+
+Pure `OrderByDescending(Confidence)` is **unfair to TF**: the heuristic average compresses toward 0.7 for any half-recognisable track, while TF-aggregated has to split mass across 400 classes and rarely exceeds 0.5 even for clear winners. Surfaced by `M.ONDE - Miijetho.flac` — heuristic Hip Hop p=0.79 was beating TF-aggregated Downtempo p=0.38 despite Downtempo being the correct answer.
+
+**Fix**: tiered source priority. `TaxonomyGenreResolver.SourcePriority(source)` returns:
+
+| Tier | Sources | Rationale |
+| ---: | --- | --- |
+| 100 | Providers (musicbrainz, discogs, acoustid, lastfm, …) | Literal API responses, most authoritative |
+| 80 | `classifier:*:aggregated` | §4.0c parent-sum cleared `aggregate_min_total`, strong signal |
+| 70 | `classifier:*:aggregated-fallback`, unknown | Diffuse aggregated output OR future sources without explicit policy |
+| 60 | `classifier:essentia-tf-*` (raw top-K) | Single-class softmax pick, can be noisy for 400-class output |
+| 55 | `classifier:*` (other prefixes) | Future classifier sources between heuristic and TF-raw |
+| 50 | `classifier:heuristic` | Rule-based, biased toward common-genre defaults |
+
+**Algorithm**: before the first-match-wins iteration, sort candidates by `(SourcePriority desc, Confidence desc, OriginalIndex asc)`. Fallback path (no taxonomy match anywhere, slot empty) also picks from the sorted list — so a provider hit with no taxonomy match wins over a higher-confidence heuristic with no taxonomy match.
+
+**Tiers are configurable** (B6.6.1, Design A). The numeric weights above are defaults defined in `SourcePriorityOptions.Defaults` and overridable via `mapping.source_priority` in `tagger.yaml`:
+
+```yaml
+mapping:
+  source_priority:
+    provider:                       100
+    classifier_aggregated:           80
+    classifier_aggregated_fallback:  70
+    classifier_tf_raw:               60
+    classifier_other:                55
+    classifier_heuristic:            50
+```
+
+Buckets (which candidate falls into which bucket) stay hardcoded — only the weights are tunable. Validator constrains each value to `[0, 1000]` (10× headroom over the default 50–100 span for unusual policies, e.g. lifting heuristic above TF-raw when the rules outperform the model in a specific library). When the section is omitted, defaults apply byte-for-byte identically to the pre-B6.6.1 behaviour.
+
+**Test coverage**: 6 unit tests in `TaxonomyGenreResolverTests` covering each tier transition + a Theory-based source-priority table that fires on any refactor that changes the order. Plus 3 behaviour tests for the new opts parameter (custom priorities, null = defaults, partial override), 2 loader tests for the YAML round-trip + default-when-missing, and a Theory for out-of-range validator errors. The M.ONDE case is verified as integration scenario.
+
 ### 4.0c Aggregation across fine-grained classifier classes
 
 **Motivation.** A 400-class softmax (discogs-effnet) spreads probability mass over many subgenre classes that share a taxonomy parent. The user's reported example: `One Self - Bluebird.mp3` top-10 had one Downtempo pick at p=0.156 and **six Hip-Hop variants** with individual p ∈ [0.07, 0.11] summing to 0.401 — but the existing first-taxonomy-match resolver picked Downtempo because that was the single highest p. Aggregation captures the marginal-probability signal: summing per parent genre across the top-K identifies "the model is collectively most confident about Hip Hop, even though it can't commit to one subgenre".

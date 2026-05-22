@@ -561,4 +561,77 @@ public class TaggerOptionsLoaderTests
 
         options.Lookup.RateLimits.MusicbrainzMs.Should().Be(0);
     }
+
+    // -- B6.6.1: mapping.source_priority configurability ---------------------------------------
+
+    [Fact]
+    public void Mapping_source_priority_section_round_trips()
+    {
+        // User overrides one or more tier values. Loader binds the snake_case keys to the
+        // PascalCase properties via the standard UnderscoredNamingConvention.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            mapping:
+              source_priority:
+                provider: 90
+                classifier_heuristic: 100
+                classifier_aggregated: 75
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+        var sp = options.Mapping.SourcePriority;
+
+        sp.Provider.Should().Be(90);
+        sp.ClassifierHeuristic.Should().Be(100);
+        sp.ClassifierAggregated.Should().Be(75);
+        // Untouched fields keep defaults.
+        sp.ClassifierAggregatedFallback.Should().Be(70);
+        sp.ClassifierTfRaw.Should().Be(60);
+        sp.ClassifierOther.Should().Be(55);
+    }
+
+    [Fact]
+    public void Mapping_source_priority_defaults_when_missing()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+        var sp = options.Mapping.SourcePriority;
+
+        sp.Provider.Should().Be(100);
+        sp.ClassifierAggregated.Should().Be(80);
+        sp.ClassifierAggregatedFallback.Should().Be(70);
+        sp.ClassifierTfRaw.Should().Be(60);
+        sp.ClassifierOther.Should().Be(55);
+        sp.ClassifierHeuristic.Should().Be(50);
+    }
+
+    [Theory]
+    [InlineData("provider", -1)]
+    [InlineData("classifier_heuristic", 1001)]
+    [InlineData("classifier_aggregated", -50)]
+    public void Source_priority_outside_zero_to_thousand_is_reported(string field, int value)
+    {
+        var yaml = $"""
+            version: 1
+            scan:
+              source: "~/music"
+            mapping:
+              source_priority:
+                {field}: {value}
+            """;
+
+        var act = () => TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        var ex = act.Should().Throw<ConfigurationException>().Which;
+        ex.Errors.Should().Contain(e =>
+            e.YamlPath == $"mapping.source_priority.{field}"
+            && e.Reason.Contains("[0, 1000]", StringComparison.Ordinal));
+    }
 }

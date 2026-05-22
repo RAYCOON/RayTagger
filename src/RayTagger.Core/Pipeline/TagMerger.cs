@@ -32,7 +32,8 @@ public static class TagMerger
         ExistingTagsPolicy policy,
         Taxonomy? taxonomy = null,
         TaxonomyGenreResolver? resolver = null,
-        IReadOnlyList<ProviderTraceEntry>? providerTrace = null)
+        IReadOnlyList<ProviderTraceEntry>? providerTrace = null,
+        SourcePriorityOptions? sourcePriority = null)
     {
         ArgumentNullException.ThrowIfNull(existing);
         ArgumentNullException.ThrowIfNull(analysis);
@@ -70,7 +71,8 @@ public static class TagMerger
                 lookup.SubGenreCandidates,
                 taxonomy,
                 existing.Genre,
-                existing.SubGenre);
+                existing.SubGenre,
+                sourcePriority);
 
             genre = BuildResolvedFromResolution(existing.Genre, resolution.ProposedGenre, resolution.MatchedCandidate);
             subgenre = BuildResolvedFromResolution(existing.SubGenre, resolution.ProposedSubgenre, resolution.MatchedCandidate);

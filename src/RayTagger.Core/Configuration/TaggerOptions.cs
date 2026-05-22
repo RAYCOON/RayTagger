@@ -458,6 +458,53 @@ public sealed class ApiKeysOptions
 public sealed class MappingOptions
 {
     public string RulesFile { get; set; } = "./mappings.yaml";
+
+    /// <summary>
+    /// Tier values used by <see cref="Mapping.TaxonomyGenreResolver"/> to order candidates before
+    /// the first-match-wins walk. Higher tier = considered first. Defaults reflect "providers win
+    /// over classifiers; TF-aggregated wins over heuristic". See
+    /// <c>docs/PLAN_GENRE_CLASSIFICATION.md §4.0d</c>.
+    /// </summary>
+    public SourcePriorityOptions SourcePriority { get; set; } = new();
+}
+
+/// <summary>
+/// Per-source-tier priority for the genre resolver's candidate ordering (B6.6). All values are
+/// independently overridable in <c>tagger.yaml</c>. Examples for typical use:
+/// <list type="bullet">
+///   <item>Heuristic-first library (TF noisy on your material): set <see cref="ClassifierHeuristic"/>
+///         &gt; <see cref="ClassifierAggregated"/>.</item>
+///   <item>De-prioritise a single provider (e.g. Discogs returns weird Style tags on your library):
+///         currently not per-provider — open a follow-up if pattern-based config is needed
+///         (see <c>docs/PLAN_GENRE_CLASSIFICATION.md §5.7</c>).</item>
+/// </list>
+/// </summary>
+public sealed class SourcePriorityOptions
+{
+    /// <summary>Tier for online provider hits (musicbrainz / discogs / acoustid / lastfm). Default: 100.</summary>
+    public int Provider { get; set; } = 100;
+
+    /// <summary>Tier for TF classifier candidates with <c>:aggregated</c> suffix (B6.5 clear winner). Default: 80.</summary>
+    public int ClassifierAggregated { get; set; } = 80;
+
+    /// <summary>Tier for TF classifier candidates with <c>:aggregated-fallback</c> suffix (diffuse output). Default: 70.</summary>
+    public int ClassifierAggregatedFallback { get; set; } = 70;
+
+    /// <summary>Tier for TF classifier raw top-K (single-class softmax). Default: 60.</summary>
+    public int ClassifierTfRaw { get; set; } = 60;
+
+    /// <summary>Tier for future classifier sources between heuristic and TF-raw. Default: 55.</summary>
+    public int ClassifierOther { get; set; } = 55;
+
+    /// <summary>Tier for the rule-based heuristic classifier. Default: 50.</summary>
+    public int ClassifierHeuristic { get; set; } = 50;
+
+    /// <summary>
+    /// Fresh-instance accessor returning the hardcoded defaults. Implemented as a property-getter
+    /// (not a cached field) so accidental mutation by a caller can't poison the shared baseline —
+    /// every read yields its own instance.
+    /// </summary>
+    public static SourcePriorityOptions Defaults => new();
 }
 
 public sealed class WriteOptions
