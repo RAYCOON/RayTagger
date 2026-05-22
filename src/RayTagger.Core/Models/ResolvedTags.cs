@@ -66,6 +66,23 @@ public sealed record ResolvedTrackTags(
     ResolvedField<string> SetPosition,
     IReadOnlyDictionary<string, ResolvedField<string>> Custom)
 {
+    /// <summary>
+    /// Optional audit trail of the taxonomy-aware genre resolver — one entry per inspected API
+    /// candidate. Populated by <see cref="Pipeline.TagMerger"/> when the resolver runs (i.e.
+    /// <c>lookup.taxonomy_resolution: true</c> AND a non-empty <c>LookupResult</c> is present).
+    /// Consumed by the UI's "Regeln"-popup and the CLI scan report; null otherwise.
+    /// </summary>
+    public IReadOnlyList<Mapping.CandidateTraceEntry>? GenreLookupTrace { get; init; }
+
+    /// <summary>
+    /// Optional raw per-provider trace from the lookup runner — one entry per provider that was
+    /// inspected during the run (Ok / NoHit / Skipped / Failed). Independent of the resolver's
+    /// trace: shows the API's raw responses, not the taxonomy-filtered candidates. Null when
+    /// the run used a cached aggregate (cache hit doesn't replay providers) or when lookup was
+    /// disabled.
+    /// </summary>
+    public IReadOnlyList<ProviderTraceEntry>? ProviderTrace { get; init; }
+
     public static ResolvedTrackTags Empty { get; } = new(
         ResolvedField.Empty<string>(),
         ResolvedField.Empty<string>(),

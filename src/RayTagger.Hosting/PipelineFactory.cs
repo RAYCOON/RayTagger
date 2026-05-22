@@ -35,6 +35,18 @@ public sealed class PipelineFactory
     }
 
     /// <summary>
+    /// Publishes the loaded <c>lookup.user_agent_contact</c> to the singleton
+    /// <see cref="UserAgentState"/>. Every <see cref="HttpClient"/> created by
+    /// <see cref="IHttpClientFactory"/> reads through this state via
+    /// <see cref="UserAgentHandler"/>, so calling this once per scan is enough.
+    /// </summary>
+    private void ApplyUserAgentContact(LookupOptions lookup)
+    {
+        var state = _services.GetRequiredService<UserAgentState>();
+        state.SetContact(lookup.UserAgentContact);
+    }
+
+    /// <summary>
     /// Builds an <see cref="IEnergyCalibrationService"/> for the <c>calibrate-energy</c> CLI verb /
     /// the UI "Calibrate Energy" button. Reuses the same Essentia bootstrap path as
     /// <see cref="BuildAsync"/> so the service either picks up an on-PATH binary or downloads one
@@ -48,6 +60,8 @@ public sealed class PipelineFactory
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(statusReporter);
+
+        ApplyUserAgentContact(options.Lookup);
 
         var loggerFactory = _services.GetRequiredService<ILoggerFactory>();
         var runner = _services.GetRequiredService<NativeProcessRunner>();
@@ -76,6 +90,8 @@ public sealed class PipelineFactory
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(statusReporter);
+
+        ApplyUserAgentContact(options.Lookup);
 
         var loggerFactory = _services.GetRequiredService<ILoggerFactory>();
         var runner = _services.GetRequiredService<NativeProcessRunner>();
@@ -216,71 +232,8 @@ public sealed class PipelineFactory
         IHttpClientFactory httpClientFactory,
         IUserDataDirectoryProvider dataDirs,
         ILoggerFactory loggerFactory,
-        IToolStatusReporter statusReporter)
-    {
-        if (!lookupOptions.Enabled)
-        {
-            return NoopLookupRunner.Instance;
-        }
-
-        var providers = new List<IMetadataProvider>(4);
-
-        if (!string.IsNullOrWhiteSpace(lookupOptions.ApiKeys.Acoustid))
-        {
-            providers.Add(new AcoustIdProvider(
-                httpClientFactory.CreateClient(ServiceCollectionComposer.AcoustIdHttpClient),
-                lookupOptions.ApiKeys.Acoustid,
-                loggerFactory.CreateLogger<AcoustIdProvider>()));
-            statusReporter.ReportLookupProvider("acoustid", available: true);
-        }
-        else
-        {
-            statusReporter.ReportLookupProvider("acoustid", available: false, detail: "no API key");
-        }
-
-        // MusicBrainz needs no API key, only a descriptive User-Agent. Always available.
-        providers.Add(new MusicBrainzProvider(
-            httpClientFactory.CreateClient(ServiceCollectionComposer.MusicBrainzHttpClient),
-            loggerFactory.CreateLogger<MusicBrainzProvider>()));
-        statusReporter.ReportLookupProvider("musicbrainz", available: true);
-
-        if (!string.IsNullOrWhiteSpace(lookupOptions.ApiKeys.Discogs))
-        {
-            providers.Add(new DiscogsProvider(
-                httpClientFactory.CreateClient(ServiceCollectionComposer.DiscogsHttpClient),
-                lookupOptions.ApiKeys.Discogs,
-                loggerFactory.CreateLogger<DiscogsProvider>()));
-            statusReporter.ReportLookupProvider("discogs", available: true);
-        }
-        else
-        {
-            statusReporter.ReportLookupProvider("discogs", available: false, detail: "no API key");
-        }
-
-        if (!string.IsNullOrWhiteSpace(lookupOptions.ApiKeys.Lastfm))
-        {
-            providers.Add(new LastFmProvider(
-                httpClientFactory.CreateClient(ServiceCollectionComposer.LastFmHttpClient),
-                lookupOptions.ApiKeys.Lastfm,
-                loggerFactory.CreateLogger<LastFmProvider>()));
-            statusReporter.ReportLookupProvider("lastfm", available: true);
-        }
-        else
-        {
-            statusReporter.ReportLookupProvider("lastfm", available: false, detail: "no API key");
-        }
-
-        ILookupCache? cache = null;
-        if (lookupOptions.Cache.Enabled)
-        {
-            var cacheDir = !string.IsNullOrWhiteSpace(lookupOptions.Cache.Directory)
-                ? lookupOptions.Cache.Directory
-                : Path.Combine(dataDirs.GetCacheDirectory(), "lookup");
-            cache = new FileLookupCache(cacheDir, loggerFactory.CreateLogger<FileLookupCache>());
-        }
-
-        return new LookupRunner(providers, lookupOptions, cache, loggerFactory.CreateLogger<LookupRunner>());
-    }
+        IToolStatusReporter statusReporter) =>
+        LookupRunnerBuilder.Build(lookupOptions, httpClientFactory, dataDirs, loggerFactory, statusReporter);
 
     // -------- internal helpers ----------------------------------------------------------------
 

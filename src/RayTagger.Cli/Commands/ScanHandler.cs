@@ -73,6 +73,7 @@ internal static class ScanHandler
             built.LookupRunner,
             serviceProvider.GetRequiredService<IMappingRuleEngine>(),
             serviceProvider.GetRequiredService<ISortService>(),
+            serviceProvider.GetRequiredService<TaxonomyGenreResolver>(),
             serviceProvider.GetRequiredService<ILogger<TagPipeline>>());
 
         var renderer = new OutcomeRenderer(console);

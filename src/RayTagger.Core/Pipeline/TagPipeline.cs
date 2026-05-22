@@ -30,6 +30,7 @@ public sealed class TagPipeline : ITagPipeline
     private readonly ILookupRunner _lookupRunner;
     private readonly IMappingRuleEngine _ruleEngine;
     private readonly ISortService _sortService;
+    private readonly Mapping.TaxonomyGenreResolver _genreResolver;
     private readonly ILogger<TagPipeline> _logger;
 
     public TagPipeline(
@@ -40,6 +41,7 @@ public sealed class TagPipeline : ITagPipeline
         ILookupRunner lookupRunner,
         IMappingRuleEngine ruleEngine,
         ISortService sortService,
+        Mapping.TaxonomyGenreResolver genreResolver,
         ILogger<TagPipeline> logger)
     {
         ArgumentNullException.ThrowIfNull(discovery);
@@ -49,6 +51,7 @@ public sealed class TagPipeline : ITagPipeline
         ArgumentNullException.ThrowIfNull(lookupRunner);
         ArgumentNullException.ThrowIfNull(ruleEngine);
         ArgumentNullException.ThrowIfNull(sortService);
+        ArgumentNullException.ThrowIfNull(genreResolver);
         ArgumentNullException.ThrowIfNull(logger);
 
         _discovery = discovery;
@@ -58,6 +61,7 @@ public sealed class TagPipeline : ITagPipeline
         _lookupRunner = lookupRunner;
         _ruleEngine = ruleEngine;
         _sortService = sortService;
+        _genreResolver = genreResolver;
         _logger = logger;
     }
 
@@ -223,10 +227,13 @@ public sealed class TagPipeline : ITagPipeline
 
 
         LookupResult? lookup = null;
+        IReadOnlyList<ProviderTraceEntry>? providerTrace = null;
         try
         {
             var query = BuildLookupQuery(existing, analysis);
-            lookup = await _lookupRunner.RunAsync(query, cancellationToken).ConfigureAwait(false);
+            var runResult = await _lookupRunner.RunAsync(query, cancellationToken).ConfigureAwait(false);
+            lookup = runResult.Result;
+            providerTrace = runResult.Trace;
         }
         catch (Exception ex) when (ShouldIsolate(ex))
         {
@@ -235,7 +242,18 @@ public sealed class TagPipeline : ITagPipeline
             // Fail open — pipeline continues with whatever analysis produced.
         }
 
-        var resolved = TagMerger.Merge(existing, analysis, lookup, options.Analysis, options.Read.ExistingTagsPolicy);
+        // Pass the taxonomy + resolver only when the flag is on AND a taxonomy is loaded;
+        // otherwise TagMerger falls back to the legacy "top-1 stur" Lookup-Merge.
+        var resolverActive = options.Lookup.TaxonomyResolution && options.Taxonomy.Loaded.Genres.Count > 0;
+        var resolved = TagMerger.Merge(
+            existing,
+            analysis,
+            lookup,
+            options.Analysis,
+            options.Read.ExistingTagsPolicy,
+            resolverActive ? options.Taxonomy.Loaded : null,
+            resolverActive ? _genreResolver : null,
+            providerTrace);
         // Snapshot the pre-map state so the UI's live-preview can re-evaluate the rule chain
         // against a freshly-edited mappings.yaml without paying for a re-read / re-analyze.
         var preMapResolved = resolved;

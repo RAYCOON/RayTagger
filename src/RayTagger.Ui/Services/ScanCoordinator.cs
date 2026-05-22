@@ -23,6 +23,7 @@ public sealed class ScanCoordinator
     private readonly ITagWriterAdapter _writer;
     private readonly IMappingRuleEngine _ruleEngine;
     private readonly ISortService _sortService;
+    private readonly TaxonomyGenreResolver _genreResolver;
     private readonly PipelineFactory _pipelineFactory;
     private readonly SidecarRestoreService _sidecarRestore;
     private readonly LibraryDiscoveryService _libraryDiscovery;
@@ -43,6 +44,14 @@ public sealed class ScanCoordinator
     public Taxonomy LastTaxonomy => _lastOptions?.Taxonomy.Loaded ?? Taxonomy.Empty;
 
     /// <summary>
+    /// The TaggerOptions tree from the last load (Scan or Discovery). Null until the first call
+    /// to <see cref="DiscoverAsync"/> or <see cref="ScanAsync"/>. Consumed by the per-track API
+    /// button (via <see cref="ITrackLookupExecutor"/>) to look up genres for one track without
+    /// re-running the whole pipeline.
+    /// </summary>
+    public TaggerOptions? LastOptions => _lastOptions;
+
+    /// <summary>
     /// Fires whenever <see cref="_lastOptions"/> changes (i.e. a new scan loaded a config). The
     /// <see cref="RayTagger.Ui.ViewModels.RuleEditorViewModel"/> subscribes so it can auto-load the
     /// mappings file the moment the scan picks one up, without depending on TabControl
@@ -56,6 +65,7 @@ public sealed class ScanCoordinator
         ITagWriterAdapter writer,
         IMappingRuleEngine ruleEngine,
         ISortService sortService,
+        TaxonomyGenreResolver genreResolver,
         PipelineFactory pipelineFactory,
         SidecarRestoreService sidecarRestore,
         LibraryDiscoveryService libraryDiscovery,
@@ -68,6 +78,7 @@ public sealed class ScanCoordinator
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(ruleEngine);
         ArgumentNullException.ThrowIfNull(sortService);
+        ArgumentNullException.ThrowIfNull(genreResolver);
         ArgumentNullException.ThrowIfNull(pipelineFactory);
         ArgumentNullException.ThrowIfNull(sidecarRestore);
         ArgumentNullException.ThrowIfNull(libraryDiscovery);
@@ -80,6 +91,7 @@ public sealed class ScanCoordinator
         _writer = writer;
         _ruleEngine = ruleEngine;
         _sortService = sortService;
+        _genreResolver = genreResolver;
         _pipelineFactory = pipelineFactory;
         _sidecarRestore = sidecarRestore;
         _libraryDiscovery = libraryDiscovery;
@@ -143,6 +155,7 @@ public sealed class ScanCoordinator
             built.LookupRunner,
             _ruleEngine,
             _sortService,
+            _genreResolver,
             _loggerFactory.CreateLogger<TagPipeline>());
 
         _logger.LogInformation("Starting UI scan of {Source}", sourceDirectory);

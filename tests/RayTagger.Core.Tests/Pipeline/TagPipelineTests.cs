@@ -21,7 +21,7 @@ public class TagPipelineTests
         reader.Read(file.Path).Returns(existing);
         var writer = Substitute.For<ITagWriterAdapter>();
 
-        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, NullLogger<TagPipeline>.Instance);
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
         var options = MakeOptions(dryRun: true);
 
         var outcomes = await CollectAsync(pipeline.RunAsync(options, new MappingRuleSet()));
@@ -46,7 +46,7 @@ public class TagPipelineTests
         reader.Read(badFile.Path).Returns<TrackTags>(_ => throw new InvalidDataException("corrupt header"));
         var writer = Substitute.For<ITagWriterAdapter>();
 
-        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, NullLogger<TagPipeline>.Instance);
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true), new MappingRuleSet()));
 
@@ -66,7 +66,7 @@ public class TagPipelineTests
         reader.Read(Arg.Any<string>()).Returns(TrackTags.Empty);
         var writer = Substitute.For<ITagWriterAdapter>();
 
-        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, NullLogger<TagPipeline>.Instance);
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -122,7 +122,7 @@ public class TagPipelineTests
 
         var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance,
             NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
-            NullLogger<TagPipeline>.Instance);
+            new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var startedPaths = new List<string>();
         ValueTask Track(TrackFile f) { startedPaths.Add(f.Path); return ValueTask.CompletedTask; }
@@ -147,7 +147,7 @@ public class TagPipelineTests
 
         var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance,
             NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
-            NullLogger<TagPipeline>.Instance);
+            new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var startedPaths = new System.Collections.Concurrent.ConcurrentBag<string>();
         ValueTask Track(TrackFile f) { startedPaths.Add(f.Path); return ValueTask.CompletedTask; }
@@ -175,7 +175,7 @@ public class TagPipelineTests
 
         var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance,
             NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
-            NullLogger<TagPipeline>.Instance);
+            new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         ValueTask Track(TrackFile f)
         {
@@ -215,7 +215,7 @@ public class TagPipelineTests
         }
 
         var writer = Substitute.For<ITagWriterAdapter>();
-        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, NullLogger<TagPipeline>.Instance);
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true, parallelism: 4), new MappingRuleSet()));
 
@@ -301,7 +301,7 @@ public class TagPipelineTests
         var pipeline = new TagPipeline(
             discovery, reader, writer, runner,
             NoopLookupRunner.Instance, new MappingRuleEngine(),
-            NoopSortService.Instance, NullLogger<TagPipeline>.Instance);
+            NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true), new MappingRuleSet()));
         outcomes.Should().HaveCount(1);

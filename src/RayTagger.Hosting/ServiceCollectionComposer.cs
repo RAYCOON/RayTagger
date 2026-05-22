@@ -54,12 +54,20 @@ public static class ServiceCollectionComposer
         services.AddSingleton<SidecarRestoreService>();
         services.AddSingleton<IFileDiscoveryService, FileDiscoveryService>();
         services.AddSingleton<IMappingRuleEngine, MappingRuleEngine>();
+        services.AddSingleton<TaxonomyGenreResolver>();
+        services.AddSingleton<IPerTrackLookupService, PerTrackLookupService>();
         services.AddSingleton<ISortService, SortService>();
         services.AddSingleton<IUserDataDirectoryProvider, UserDataDirectoryProvider>();
 
         // Native-tool infrastructure.
         services.AddSingleton<NativeProcessRunner>();
         services.AddSingleton<IAnalysisToolProbe, AnalysisToolProbe>();
+
+        // User-Agent infrastructure. The state singleton is mutated once per scan from the
+        // loaded LookupOptions.UserAgentContact; the handler is registered transient because
+        // IHttpClientFactory instantiates one per named client.
+        services.AddSingleton<UserAgentState>();
+        services.AddTransient<UserAgentHandler>();
 
         // Lookup HttpClients with the Polly resilience pipeline.
         AddProviderHttpClient(services, AcoustIdHttpClient, "https://api.acoustid.org/");
@@ -72,9 +80,7 @@ public static class ServiceCollectionComposer
         services.AddHttpClient(NativeToolsBootstrapHttpClient, client =>
         {
             client.Timeout = TimeSpan.FromMinutes(5);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "RayTagger/0.1 (+https://github.com/RAYCOON/raytagger)");
-        });
+        }).AddHttpMessageHandler<UserAgentHandler>();
 
         // Shared pipeline factory — both the CLI's ScanHandler and the UI's ScanCoordinator
         // resolve and reuse this. Registering it here keeps the wiring symmetric.
@@ -89,11 +95,11 @@ public static class ServiceCollectionComposer
         {
             client.BaseAddress = new Uri(baseAddress);
             // 15s per-request ceiling on top of the resilience pipeline's per-attempt + total
-            // timeouts below. MusicBrainz/Discogs require a descriptive User-Agent.
+            // timeouts below. The User-Agent is stamped per-request by UserAgentHandler so the
+            // value tracks lookup.user_agent_contact updates without rebuilding the client.
             client.Timeout = TimeSpan.FromSeconds(15);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "RayTagger/0.1 (+https://github.com/RAYCOON/raytagger)");
         })
+        .AddHttpMessageHandler<UserAgentHandler>()
         // Standard resilience: retry transient errors, honour Retry-After on 429/503, circuit
         // breaker on sustained failure, total + per-attempt timeouts.
         .AddStandardResilienceHandler(options =>

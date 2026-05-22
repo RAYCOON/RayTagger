@@ -21,17 +21,23 @@ public sealed class DiscogsProvider : IMetadataProvider
     private readonly HttpClient _httpClient;
     private readonly string _token;
     private readonly ILogger<DiscogsProvider> _logger;
-    private readonly RateLimiter _rateLimiter = new(TimeSpan.FromMilliseconds(1100));
+    private readonly RateLimiter _rateLimiter;
 
-    public DiscogsProvider(HttpClient httpClient, string token, ILogger<DiscogsProvider> logger)
+    public DiscogsProvider(
+        HttpClient httpClient,
+        string token,
+        ILogger<DiscogsProvider> logger,
+        TimeSpan minRequestInterval)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentOutOfRangeException.ThrowIfLessThan(minRequestInterval, TimeSpan.Zero);
 
         _httpClient = httpClient;
         _token = token;
         _logger = logger;
+        _rateLimiter = new RateLimiter(minRequestInterval);
     }
 
     public string Name => ProviderName;

@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\RayTagger.Lookup\RayTagger.Lookup.csproj" />
+    <ProjectReference Include="..\..\src\RayTagger.Hosting\RayTagger.Hosting.csproj" />
   </ItemGroup>
 
   <ItemGroup>

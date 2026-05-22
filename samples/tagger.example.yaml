@@ -141,6 +141,40 @@ lookup:
     discogs:  "${env:DISCOGS_TOKEN}"
     lastfm:   "${env:LASTFM_API_KEY}"
 
+  # MusicBrainz requires every client to identify itself with a User-Agent string that contains
+  # a contact (URL or email) the MB ops team can reach in case of misbehaviour — see
+  #   https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting
+  # Tagger always sends "RayTagger/<version> ( <contact> )". When this field is empty, the
+  # default is the public project repo (https://github.com/RAYCOON/RayTagger). Override it when
+  # you run a fork or an internal deployment where THAT contact is wrong for THIS install.
+  # Examples:  "you@example.com"  or  "https://your-internal-wiki/raytagger"
+  user_agent_contact: ""
+
+  # New taxonomy-aware genre resolver (default on). When true, every API genre/sub-genre is
+  # matched whole-word case-insensitive against taxonomy.yaml — longest match wins, the
+  # canonical YAML casing is written, and existing tags that are already valid are protected
+  # (see docs/ARCHITECTURE.md §Genre Resolution). Set false to fall back to "top-1 candidate
+  # wins blindly" — useful only if you curate tags by other means.
+  #
+  # NOTE: this flag controls the AUTOMATIC lookup at scan time. The UI's per-track "API"
+  # button always runs taxonomy resolution and always works as long as at least one provider
+  # has credentials configured — it deliberately ignores `enabled` and this flag.
+  taxonomy_resolution: true
+
+  # Per-provider minimum interval between outbound requests (milliseconds). Defaults match the
+  # published policies as of late 2025 — leave alone unless you have a reason to deviate:
+  #   AcoustID    3 req/s per key       → 350 ms keeps us under (1000 / 3 ≈ 333 ms + headroom)
+  #   MusicBrainz 1 req/s per IP+UA     → 1100 ms with safety margin; lower risks an IP block
+  #   Discogs     60 req/min authed     → 1100 ms ≈ 54 req/min
+  #   Last.fm     undocumented          → 200 ms (5 req/s), conservative
+  # Increase when sharing a key across machines; decrease only if you have explicit upstream
+  # permission. 0 disables client-side throttling entirely (don't — server-side bans are real).
+  rate_limits:
+    acoustid_ms:    350
+    musicbrainz_ms: 1100
+    discogs_ms:     1100
+    lastfm_ms:      200
+
 # --- 5. Mapping rules --------------------------------------------------------
 mapping:
   rules_file: "./mappings.yaml"

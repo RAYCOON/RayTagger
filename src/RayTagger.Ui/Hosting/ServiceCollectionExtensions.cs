@@ -42,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<LibraryDiscoveryService>();
         services.AddSingleton<ScanCoordinator>();
         services.AddSingleton<EnergyCalibrationCoordinator>();
+        services.AddSingleton<ITrackLookupExecutor, TrackLookupExecutor>();
         services.AddTransient<MainWindowViewModel>();
         services.AddTransient<ScanViewModel>();
         services.AddTransient<RuleEditorViewModel>();

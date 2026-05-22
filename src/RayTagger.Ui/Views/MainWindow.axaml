@@ -198,9 +198,12 @@
                             </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <!-- Background: gelbe Diff-Markierung (Existing vs Proposed).
+                                         Foreground: dunkelblau wenn der Wert nicht in der Taxonomy steht. -->
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasGenreDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
-                                        <TextBlock Text="{Binding GenreDisplay}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding GenreDisplay}" VerticalAlignment="Center"
+                                                   Foreground="{Binding HasNonTaxonomyGenre, Converter={x:Static vm:TaxonomyHighlightBrushConverter.Instance}}"/>
                                     </Border>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
@@ -217,8 +220,29 @@
                                 <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
                                     <Border Padding="6,0" VerticalAlignment="Stretch"
                                             Background="{Binding HasSubGenreDiff, Converter={x:Static vm:DiffToBrushConverter.Instance}}">
-                                        <TextBlock Text="{Binding SubGenreDisplay}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding SubGenreDisplay}" VerticalAlignment="Center"
+                                                   Foreground="{Binding HasNonTaxonomySubGenre, Converter={x:Static vm:TaxonomyHighlightBrushConverter.Instance}}"/>
                                     </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <!-- Per-row "API" button. Fires the same lookup the bulk scan uses, but
+                             for one track on demand. Ignores lookup.enabled in tagger.yaml — that
+                             flag only gates the automatic scan-time lookup. Enabled state and
+                             tooltip text come from CanRefetchFromApi / RefetchTooltip in the row VM. -->
+                        <DataGridTemplateColumn Width="60">
+                            <DataGridTemplateColumn.Header>
+                                <TextBlock Text="API" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            </DataGridTemplateColumn.Header>
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:TrackOutcomeViewModel">
+                                    <Button Content="API"
+                                            Command="{Binding RefetchFromApiCommand}"
+                                            IsEnabled="{Binding CanRefetchFromApi}"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Padding="6,2"
+                                            ToolTip.Tip="{Binding RefetchTooltip}"/>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>

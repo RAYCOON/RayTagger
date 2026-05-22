@@ -24,15 +24,20 @@ public sealed class MusicBrainzProvider : IMetadataProvider
 
     private readonly HttpClient _httpClient;
     private readonly ILogger<MusicBrainzProvider> _logger;
-    private readonly RateLimiter _rateLimiter = new(TimeSpan.FromMilliseconds(1100));
+    private readonly RateLimiter _rateLimiter;
 
-    public MusicBrainzProvider(HttpClient httpClient, ILogger<MusicBrainzProvider> logger)
+    public MusicBrainzProvider(
+        HttpClient httpClient,
+        ILogger<MusicBrainzProvider> logger,
+        TimeSpan minRequestInterval)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentOutOfRangeException.ThrowIfLessThan(minRequestInterval, TimeSpan.Zero);
 
         _httpClient = httpClient;
         _logger = logger;
+        _rateLimiter = new RateLimiter(minRequestInterval);
     }
 
     public string Name => ProviderName;
@@ -48,37 +53,113 @@ public sealed class MusicBrainzProvider : IMetadataProvider
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var requestUri = query.RecordingMbid is not null
-            ? $"ws/2/recording/{query.RecordingMbid:D}?fmt=json&inc=genres+tags+releases"
-            : BuildSearchUri(query);
-        if (requestUri is null) return null;
+        // Fast path: caller already has the recording MBID (e.g. AcoustID handshake supplied
+        // it). One request, all genres/tags inline via inc=.
+        if (query.RecordingMbid is not null)
+        {
+            return await FetchRecordingDetailsAsync(query.RecordingMbid.Value, cancellationToken).ConfigureAwait(false);
+        }
 
+        // Slow path: artist+title search. MB's /search endpoint **does not** return tags or
+        // genres regardless of an `inc=` parameter — it's strictly a discovery step. So we
+        // walk up to MaxRecordingsToProbe of the top search hits, follow each one up with a
+        // /recording/{mbid}?inc=genres+tags+releases detail lookup, and stop at the first hit
+        // that actually carries genre/tag annotations. That way an untagged remix at rank 1
+        // doesn't shadow the tagged base recording at rank 2.
+        var searchUri = BuildSearchUri(query);
+        if (searchUri is null) return null;
+
+        List<Guid> topMbids;
         try
         {
-            await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
-            using var response = await _httpClient.GetAsync(new Uri(requestUri, UriKind.Relative), cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("MusicBrainz returned {Status} for {Uri}", response.StatusCode, requestUri);
-                return null;
-            }
-
-            using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return query.RecordingMbid is not null
-                ? ParseRecordingResponse(doc.RootElement)
-                : ParseSearchResponse(doc.RootElement);
+            topMbids = await SearchForTopMbidsAsync(searchUri, cancellationToken).ConfigureAwait(false);
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogWarning(ex, "MusicBrainz request failed: {Message}", ex.Message);
+            _logger.LogWarning(ex, "MusicBrainz search failed: {Message}", ex.Message);
             return null;
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "MusicBrainz returned malformed JSON: {Message}", ex.Message);
+            _logger.LogWarning(ex, "MusicBrainz search returned malformed JSON: {Message}", ex.Message);
             return null;
         }
+
+        if (topMbids.Count == 0) return LookupResult.Empty;
+
+        LookupResult? firstHitWithMbidOnly = null;
+        for (var i = 0; i < topMbids.Count; i++)
+        {
+            var detail = await FetchRecordingDetailsAsync(topMbids[i], cancellationToken).ConfigureAwait(false);
+            if (detail is null) continue;
+            firstHitWithMbidOnly ??= detail;
+            if (detail.GenreCandidates.Count > 0)
+            {
+                return detail;
+            }
+        }
+
+        // No recording in the top-N had any tags. Return the first hit anyway so the caller
+        // gets at least the MBID for downstream lookup chaining (and so the empty-result
+        // cache filter in LookupRunner sees a useful signal worth caching).
+        return firstHitWithMbidOnly ?? LookupResult.Empty;
+    }
+
+    private async Task<LookupResult?> FetchRecordingDetailsAsync(Guid recordingMbid, CancellationToken cancellationToken)
+    {
+        var uri = $"ws/2/recording/{recordingMbid:D}?fmt=json&inc=genres+tags+releases";
+        try
+        {
+            await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+            using var response = await _httpClient.GetAsync(new Uri(uri, UriKind.Relative), cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("MusicBrainz detail returned {Status} for {Uri}", response.StatusCode, uri);
+                return null;
+            }
+            using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+            return ParseRecordingResponse(doc.RootElement);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "MusicBrainz detail request failed: {Message}", ex.Message);
+            return null;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "MusicBrainz detail returned malformed JSON: {Message}", ex.Message);
+            return null;
+        }
+    }
+
+    private async Task<List<Guid>> SearchForTopMbidsAsync(string searchUri, CancellationToken cancellationToken)
+    {
+        await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var response = await _httpClient.GetAsync(new Uri(searchUri, UriKind.Relative), cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("MusicBrainz search returned {Status} for {Uri}", response.StatusCode, searchUri);
+            return [];
+        }
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("recordings", out var recordings) || recordings.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        var take = Math.Min(MaxRecordingsToProbe, recordings.GetArrayLength());
+        var mbids = new List<Guid>(take);
+        for (var i = 0; i < take; i++)
+        {
+            if (recordings[i].TryGetProperty("id", out var idElem)
+                && Guid.TryParse(idElem.GetString(), out var parsed))
+            {
+                mbids.Add(parsed);
+            }
+        }
+        return mbids;
     }
 
     private static string? BuildSearchUri(LookupQuery query)
@@ -150,17 +231,13 @@ public sealed class MusicBrainzProvider : IMetadataProvider
         return new LookupResult(combined, SubGenreCandidates: [], releaseMbid, recordingMbid);
     }
 
-    private static LookupResult ParseSearchResponse(JsonElement root)
-    {
-        if (!root.TryGetProperty("recordings", out var recordings)
-            || recordings.ValueKind != JsonValueKind.Array
-            || recordings.GetArrayLength() == 0)
-        {
-            return LookupResult.Empty;
-        }
-        // Pick the best (first) match — MusicBrainz already sorts by score descending.
-        return ParseRecordingResponse(recordings[0]);
-    }
+    /// <summary>
+    /// How many of the top search hits to follow up with a detail lookup before giving up.
+    /// Each probe costs one extra MB request (gated by the 1 req/s rate limit), so this trades
+    /// latency for the chance to find genre tags on a non-#1 hit. 3 strikes a balance — the
+    /// untagged-remix-then-tagged-base case usually resolves at rank 2.
+    /// </summary>
+    private const int MaxRecordingsToProbe = 3;
 
     private static List<GenreCandidate> ReadCandidates(JsonElement root, string fieldName, double weight)
     {

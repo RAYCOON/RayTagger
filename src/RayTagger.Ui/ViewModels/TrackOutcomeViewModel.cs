@@ -1,6 +1,10 @@
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using RayTagger.Core.Mapping;
 using RayTagger.Core.Models;
+using RayTagger.Hosting;
+using RayTagger.Ui.Services;
 
 namespace RayTagger.Ui.ViewModels;
 
@@ -34,11 +38,14 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasGenreDiff))]
     [NotifyPropertyChangedFor(nameof(GenreDisplay))]
     [NotifyPropertyChangedFor(nameof(EffectiveGenre))]
+    [NotifyPropertyChangedFor(nameof(HasNonTaxonomyGenre))]
+    [NotifyPropertyChangedFor(nameof(HasNonTaxonomySubGenre))]
     private string? _proposedGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSubGenreDiff))]
     [NotifyPropertyChangedFor(nameof(SubGenreDisplay))]
     [NotifyPropertyChangedFor(nameof(EffectiveSubGenre))]
+    [NotifyPropertyChangedFor(nameof(HasNonTaxonomySubGenre))]
     private string? _proposedSubGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasBpmDiff))]
@@ -104,6 +111,58 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     // highlight — null proposed → no highlight, otherwise every Unverändert row would glow).
     public bool HasGenreDiff => ProposedGenre is not null && !string.Equals(ExistingGenre, ProposedGenre, StringComparison.Ordinal);
     public bool HasSubGenreDiff => ProposedSubGenre is not null && !string.Equals(ExistingSubGenre, ProposedSubGenre, StringComparison.Ordinal);
+
+    /// <summary>
+    /// True when either the existing or the proposed genre is non-empty but not part of the
+    /// configured taxonomy. Drives the dark-blue foreground on the Genre cell. Defaults to
+    /// false when <see cref="CurrentTaxonomy"/> hasn't been wired (pre-scan rows, no taxonomy
+    /// file).
+    /// </summary>
+    public bool HasNonTaxonomyGenre
+    {
+        get
+        {
+            if (CurrentTaxonomy is null || CurrentTaxonomy.Genres.Count == 0) return false;
+            return IsNonEmptyNonTaxonomy(ExistingGenre, CurrentTaxonomy.Genres)
+                || IsNonEmptyNonTaxonomy(ProposedGenre, CurrentTaxonomy.Genres);
+        }
+    }
+
+    /// <summary>
+    /// Same logic for the Sub-Genre cell, but evaluated against
+    /// <c>taxonomy.subgenres[effective_genre]</c>. When no effective genre is set, returns false
+    /// (a stray subgenre without parent isn't a "taxonomy mismatch" — it's just orphan data).
+    /// </summary>
+    public bool HasNonTaxonomySubGenre
+    {
+        get
+        {
+            if (CurrentTaxonomy is null || CurrentTaxonomy.Subgenres.Count == 0) return false;
+            var parent = EffectiveGenre;
+            if (string.IsNullOrEmpty(parent) || !CurrentTaxonomy.Subgenres.TryGetValue(parent, out var subs))
+            {
+                return false;
+            }
+            return IsNonEmptyNonTaxonomy(ExistingSubGenre, subs)
+                || IsNonEmptyNonTaxonomy(ProposedSubGenre, subs);
+        }
+    }
+
+    private static bool IsNonEmptyNonTaxonomy(string? value, IReadOnlyList<string> allowlist)
+    {
+        if (string.IsNullOrEmpty(value)) return false;
+        foreach (var allowed in allowlist)
+        {
+            if (string.Equals(value, allowed, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Pushed in by <c>ScanViewModel</c> after a scan / discovery loads a taxonomy. Idempotent —
+    /// passing the same instance twice is a no-op via the <see cref="CurrentTaxonomy"/> setter.
+    /// </summary>
+    public void UpdateTaxonomy(Taxonomy taxonomy) => CurrentTaxonomy = taxonomy;
     public bool HasBpmDiff => ProposedBpm is not null && ProposedBpm != ExistingBpm;
     public bool HasKeyDiff => ProposedKey is not null && !string.Equals(ExistingKey, ProposedKey, StringComparison.Ordinal);
     public bool HasCamelotKeyDiff => ProposedCamelotKey is not null && !string.Equals(ExistingCamelotKey, ProposedCamelotKey, StringComparison.Ordinal);
@@ -137,15 +196,143 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
 
     [ObservableProperty] private string? _applyError;
 
+    // Per-track API-button state. Service injected via the constructor — null when the row was
+    // created by a code path that doesn't wire it (preview ctor, tests).
+    private readonly ITrackLookupExecutor? _lookupExecutor;
+
+    /// <summary>
+    /// Taxonomy snapshot used to colour non-taxonomy genre / sub-genre values dark blue. Set by
+    /// <see cref="UpdateTaxonomy"/> from <c>ScanViewModel</c> when a config loads. Null until
+    /// then — falls back to "everything is OK" (no highlight) so pre-scan rows don't all blink
+    /// blue.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasNonTaxonomyGenre))]
+    [NotifyPropertyChangedFor(nameof(HasNonTaxonomySubGenre))]
+    private Taxonomy? _currentTaxonomy;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRefetchFromApi))]
+    [NotifyPropertyChangedFor(nameof(RefetchTooltip))]
+    private bool _isRefetchingFromApi;
+
+    /// <summary>
+    /// Result of the last API-button click. Drives the tooltip on the button and, when populated,
+    /// feeds the "Regeln"-popup's Genre-Resolution-Trace section. Cleared by a re-click.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RefetchTooltip))]
+    private PerTrackLookupResult? _lastLookupResult;
+
+    /// <summary>
+    /// Resolution trace from the most recent operation — either the bulk-scan (filled by
+    /// <c>UpdateFromOutcome</c> via <see cref="ResolvedTrackTags.GenreLookupTrace"/>) or the API
+    /// button. Surfaced via the AppliedRulesDialog so the user can see why a particular genre was
+    /// picked.
+    /// </summary>
+    [ObservableProperty] private IReadOnlyList<CandidateTraceEntry>? _lookupTrace;
+
+    /// <summary>
+    /// Raw per-provider trace (acoustid / musicbrainz / discogs / lastfm) from the most recent
+    /// operation. Bulk-scan fills it from <see cref="ResolvedTrackTags.ProviderTrace"/>; API
+    /// button overwrites it with the fresh response. Shown as middle section in AppliedRulesDialog
+    /// (Roh → Resolved → Rules order).
+    /// </summary>
+    [ObservableProperty] private IReadOnlyList<ProviderTraceEntry>? _providerTrace;
+
+    public bool CanRefetchFromApi =>
+        !IsRefetchingFromApi
+        && !IsApplying
+        && !IsReverting
+        && _lookupExecutor is not null
+        && _lookupExecutor.IsAvailable;
+
+    public string RefetchTooltip
+    {
+        get
+        {
+            if (IsRefetchingFromApi) return "API-Abfrage läuft…";
+            var unavailable = _lookupExecutor?.UnavailableReason;
+            if (unavailable is not null) return unavailable;
+
+            var last = LastLookupResult;
+            if (last is null) return "Genre / Sub-Genre für diesen Track via API neu ermitteln";
+            if (last.ErrorMessage is not null) return $"Letzte Anfrage fehlgeschlagen: {last.ErrorMessage}";
+
+            // Diagnose-Hierarchie (von "keine Daten" über "Daten aber kein Taxonomy-Match" zum
+            // Treffer-Tooltip). Wichtig: "keine Kandidaten" ist mehrdeutig — könnte heißen
+            // "MB findet den Track nicht" ODER "MB findet ihn, hat aber keine Tags".
+            if (last.MatchedCandidate is null && last.RawCandidateCount == 0)
+            {
+                return last.ApiFoundTrack
+                    ? "Track in MusicBrainz gefunden, aber dort sind keine Genre-Tags hinterlegt — die MB-Community hat ihn noch nicht getaggt."
+                    : "Track in keiner konfigurierten API-Datenbank gefunden.";
+            }
+            if (last.ChosenGenre is null && last.FallbackApplied)
+            {
+                return $"Letzte Anfrage: kein Taxonomy-Treffer, Fallback '{last.ProposedGenre}' (aus {last.MatchedCandidate!.Source}, Confidence {last.MatchedCandidate.Confidence:F2}).";
+            }
+            if (last.ChosenGenre is null)
+            {
+                return $"Letzte Anfrage: {last.RawCandidateCount} API-Kandidaten, aber keiner matched ein Taxonomy-Genre.";
+            }
+            var sub = last.ChosenSubgenre is null ? "" : $" / {last.ChosenSubgenre}";
+            return $"Letzte Anfrage: {last.ChosenGenre}{sub} (aus {last.MatchedCandidate!.Source}, Confidence {last.MatchedCandidate.Confidence:F2}).";
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRefetchFromApi))]
+    private async Task RefetchFromApiAsync(CancellationToken cancellationToken)
+    {
+        if (_lookupExecutor is null) return;
+        var existing = SourceOutcome.ExistingAtScan;
+        if (existing is null) return;
+
+        IsRefetchingFromApi = true;
+        try
+        {
+            var result = await _lookupExecutor.ExecuteAsync(existing, Path, cancellationToken).ConfigureAwait(true);
+            LastLookupResult = result;
+            LookupTrace = result.Trace;
+            ProviderTrace = result.ProviderTrace;
+
+            // Apply to the row only when the resolver actually proposed something. Null = the
+            // existing-protection rule kept the disk value; tooltip explains why.
+            if (result.ProposedGenre is not null)
+            {
+                ProposedGenre = result.ProposedGenre;
+                GenreSource = TagFieldSource.Lookup;
+            }
+            if (result.ProposedSubgenre is not null)
+            {
+                ProposedSubGenre = result.ProposedSubgenre;
+            }
+
+            // StatusLabel refresh — if the proposed values now diverge from existing, flip the
+            // badge to "Würde ändern" so the user can hit "Anwenden".
+            if (HasGenreDiff || HasSubGenreDiff || HasBpmDiff || HasKeyDiff || HasEnergyDiff)
+            {
+                StatusLabel = "Würde ändern";
+            }
+        }
+        finally
+        {
+            IsRefetchingFromApi = false;
+        }
+    }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasGenreDiff))]
     [NotifyPropertyChangedFor(nameof(GenreDisplay))]
     [NotifyPropertyChangedFor(nameof(EffectiveGenre))]
+    [NotifyPropertyChangedFor(nameof(HasNonTaxonomyGenre))]
+    [NotifyPropertyChangedFor(nameof(HasNonTaxonomySubGenre))]
     private string? _existingGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSubGenreDiff))]
     [NotifyPropertyChangedFor(nameof(SubGenreDisplay))]
     [NotifyPropertyChangedFor(nameof(EffectiveSubGenre))]
+    [NotifyPropertyChangedFor(nameof(HasNonTaxonomySubGenre))]
     private string? _existingSubGenre;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasBpmDiff))]
@@ -321,11 +508,15 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     /// <summary>True iff a backup-sidecar exists on disk and no Apply/Revert is in flight.</summary>
     public bool CanRevert => HasSidecar && !IsApplying && !IsReverting;
 
-    public TrackOutcomeViewModel(PipelineOutcome outcome, TrackTags existing)
+    public TrackOutcomeViewModel(
+        PipelineOutcome outcome,
+        TrackTags existing,
+        ITrackLookupExecutor? lookupExecutor = null)
     {
         ArgumentNullException.ThrowIfNull(outcome);
         ArgumentNullException.ThrowIfNull(existing);
 
+        _lookupExecutor = lookupExecutor;
         SourceOutcome = outcome;
         Path = outcome.File.Path;
         FileName = System.IO.Path.GetFileName(outcome.File.Path);
@@ -352,6 +543,9 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         BpmWasSnapped = outcome.BpmWasSnapped;
         BpmIsForcedFallback = outcome.BpmIsForcedFallback;
         Errors = [.. outcome.Errors.Select(e => $"[{e.Stage}] {e.Message}")];
+        // Bulk-scan also produces a resolution trace when taxonomy_resolution is on.
+        LookupTrace = outcome.Resolved.GenreLookupTrace;
+        ProviderTrace = outcome.Resolved.ProviderTrace;
     }
 
     /// <summary>
@@ -367,10 +561,16 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
     /// When non-null, the row enters "Fehler" status immediately — used for files whose tag read
     /// blew up (corrupt header, etc.). The pipeline's scan stage will overwrite this if it succeeds.
     /// </param>
-    public TrackOutcomeViewModel(TrackFile file, TrackTags existing, string? discoveryError = null)
+    public TrackOutcomeViewModel(
+        TrackFile file,
+        TrackTags existing,
+        string? discoveryError = null,
+        ITrackLookupExecutor? lookupExecutor = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(existing);
+
+        _lookupExecutor = lookupExecutor;
 
         // Stub PipelineOutcome lets SourceOutcome stay non-nullable. Resolved is empty so the
         // ApplyResolvedFromOutcome path (not called here) would leave Proposed-* null anyway;
@@ -437,6 +637,13 @@ public sealed partial class TrackOutcomeViewModel : ObservableObject
         ApplyResolvedFromOutcome(outcome);
         BpmWasSnapped = outcome.BpmWasSnapped;
         BpmIsForcedFallback = outcome.BpmIsForcedFallback;
+
+        // Carry the pipeline's trace data across into the row VM so the AppliedRulesDialog can
+        // show both the raw provider responses AND the taxonomy resolver's trace — same data
+        // the API button populates on demand. Without this only Mapping-Rules would show after
+        // a bulk-scan.
+        LookupTrace = outcome.Resolved.GenreLookupTrace;
+        ProviderTrace = outcome.Resolved.ProviderTrace;
     }
 
     /// <summary>Mark the row as "currently being scanned" — flips the badge to SCN.</summary>

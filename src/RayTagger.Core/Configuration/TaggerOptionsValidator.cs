@@ -137,6 +137,23 @@ internal static class TaggerOptionsValidator
                 "lookup.providers",
                 "At least one provider must be listed when lookup is enabled."));
         }
+
+        // Negative intervals would make TimeSpan.FromMilliseconds throw; zero is allowed (no
+        // throttling) but flagged below since it almost always invites a server-side block.
+        ValidateRateLimitMs("acoustid_ms", lookup.RateLimits.AcoustidMs, errors);
+        ValidateRateLimitMs("musicbrainz_ms", lookup.RateLimits.MusicbrainzMs, errors);
+        ValidateRateLimitMs("discogs_ms", lookup.RateLimits.DiscogsMs, errors);
+        ValidateRateLimitMs("lastfm_ms", lookup.RateLimits.LastfmMs, errors);
+    }
+
+    private static void ValidateRateLimitMs(string field, int valueMs, List<ConfigurationError> errors)
+    {
+        if (valueMs < 0)
+        {
+            errors.Add(new ConfigurationError(
+                $"lookup.rate_limits.{field}",
+                $"Must be >= 0 ms (got {valueMs}). Use 0 to disable client-side throttling."));
+        }
     }
 
     // Plausible musical tempo bounds — anything below 30 or above 300 BPM is either a

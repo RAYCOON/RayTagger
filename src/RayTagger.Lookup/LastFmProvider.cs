@@ -19,17 +19,23 @@ public sealed class LastFmProvider : IMetadataProvider
     private readonly HttpClient _httpClient;
     private readonly string _apiKey;
     private readonly ILogger<LastFmProvider> _logger;
-    private readonly RateLimiter _rateLimiter = new(TimeSpan.FromMilliseconds(200));
+    private readonly RateLimiter _rateLimiter;
 
-    public LastFmProvider(HttpClient httpClient, string apiKey, ILogger<LastFmProvider> logger)
+    public LastFmProvider(
+        HttpClient httpClient,
+        string apiKey,
+        ILogger<LastFmProvider> logger,
+        TimeSpan minRequestInterval)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentOutOfRangeException.ThrowIfLessThan(minRequestInterval, TimeSpan.Zero);
 
         _httpClient = httpClient;
         _apiKey = apiKey;
         _logger = logger;
+        _rateLimiter = new RateLimiter(minRequestInterval);
     }
 
     public string Name => ProviderName;

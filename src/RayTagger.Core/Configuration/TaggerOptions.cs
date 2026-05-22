@@ -253,6 +253,59 @@ public sealed class LookupOptions
     public List<string> Providers { get; set; } = ["acoustid", "musicbrainz", "discogs", "lastfm"];
     public CacheOptions Cache { get; set; } = new();
     public ApiKeysOptions ApiKeys { get; set; } = new();
+    public RateLimitsOptions RateLimits { get; set; } = new();
+
+    /// <summary>
+    /// Optional contact (URL or email) embedded in the outbound <c>User-Agent</c> header so the
+    /// MusicBrainz operations team can reach this deployment's maintainers per
+    /// <see href="https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting"/>. Empty or
+    /// whitespace = use the project's default (the public RayTagger repository URL).
+    /// Override this when running a fork or an internal deployment where the upstream repo is
+    /// not the right point of contact.
+    /// </summary>
+    public string UserAgentContact { get; set; } = string.Empty;
+
+    /// <summary>
+    /// When <c>true</c> (default), the new taxonomy-aware genre resolver is used: API candidates
+    /// are matched whole-word against <c>taxonomy.genres</c> / <c>taxonomy.subgenres</c>, longest
+    /// match wins, and the canonical YAML casing is written. When <c>false</c>, the legacy
+    /// "top-1 candidate stur übernehmen" path is used (kept for users who curate their tags by
+    /// other means and don't want taxonomy filtering).
+    /// </summary>
+    public bool TaxonomyResolution { get; set; } = true;
+}
+
+/// <summary>
+/// Per-provider minimum interval (milliseconds) between consecutive outbound requests. The
+/// values are enforced client-side by each provider's <c>RateLimiter</c>; setting them above the
+/// API's documented limit is the right move when sharing an API key across multiple machines
+/// or when an upstream provider has tightened its policy. Setting them below risks 429/503
+/// responses and — for MusicBrainz — outright IP blocks.
+/// </summary>
+/// <remarks>
+/// Defaults match the published policies as of late 2025:
+/// <list type="bullet">
+///   <item>AcoustID: 3 req/s per key (350 ms keeps us safely under).</item>
+///   <item>MusicBrainz: 1 req/s per IP+UA (1100 ms with a small safety margin).</item>
+///   <item>Discogs: 60 req/min authenticated (1100 ms ≈ 54 req/min).</item>
+///   <item>Last.fm: no published limit; 200 ms (5 req/s) is conservative.</item>
+/// </list>
+/// </remarks>
+public sealed class RateLimitsOptions
+{
+    /// <summary>Default for <see cref="AcoustidMs"/>. Public so providers and tests can reference one source of truth.</summary>
+    public const int DefaultAcoustidMs = 350;
+    /// <summary>Default for <see cref="MusicbrainzMs"/>.</summary>
+    public const int DefaultMusicbrainzMs = 1100;
+    /// <summary>Default for <see cref="DiscogsMs"/>.</summary>
+    public const int DefaultDiscogsMs = 1100;
+    /// <summary>Default for <see cref="LastfmMs"/>.</summary>
+    public const int DefaultLastfmMs = 200;
+
+    public int AcoustidMs { get; set; } = DefaultAcoustidMs;
+    public int MusicbrainzMs { get; set; } = DefaultMusicbrainzMs;
+    public int DiscogsMs { get; set; } = DefaultDiscogsMs;
+    public int LastfmMs { get; set; } = DefaultLastfmMs;
 }
 
 public sealed class CacheOptions

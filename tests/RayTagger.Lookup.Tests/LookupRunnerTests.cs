@@ -20,7 +20,7 @@ public class LookupRunnerTests
 
         var result = await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
 
-        result.Should().BeSameAs(LookupResult.Empty);
+        result.Result.Should().BeSameAs(LookupResult.Empty);
         await provider.DidNotReceive().LookupAsync(Arg.Any<LookupQuery>(), Arg.Any<CancellationToken>());
     }
 
@@ -32,7 +32,7 @@ public class LookupRunnerTests
 
         var result = await runner.RunAsync(new LookupQuery());
 
-        result.Should().BeSameAs(LookupResult.Empty);
+        result.Result.Should().BeSameAs(LookupResult.Empty);
     }
 
     [Fact]
@@ -110,11 +110,11 @@ public class LookupRunnerTests
 
         var result = await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
 
-        result.GenreCandidates.Should().HaveCount(3);
-        result.GenreCandidates[0].Value.Should().Be("House");      // 0.9 wins over 0.5
-        result.GenreCandidates[0].Source.Should().Be("b");
-        result.GenreCandidates[1].Value.Should().Be("Techno");     // 0.7
-        result.GenreCandidates[2].Value.Should().Be("Electronic"); // 0.6
+        result.Result.GenreCandidates.Should().HaveCount(3);
+        result.Result.GenreCandidates[0].Value.Should().Be("House");      // 0.9 wins over 0.5
+        result.Result.GenreCandidates[0].Source.Should().Be("b");
+        result.Result.GenreCandidates[1].Value.Should().Be("Techno");     // 0.7
+        result.Result.GenreCandidates[2].Value.Should().Be("Electronic"); // 0.6
     }
 
     [Fact]
@@ -136,8 +136,8 @@ public class LookupRunnerTests
 
         var result = await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
 
-        result.GenreCandidates.Should().ContainSingle();
-        result.GenreCandidates[0].Value.Should().Be("House");
+        result.Result.GenreCandidates.Should().ContainSingle();
+        result.Result.GenreCandidates[0].Value.Should().Be("House");
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public class LookupRunnerTests
 
         var result = await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
 
-        result.GenreCandidates[0].Value.Should().Be("Cached");
+        result.Result.GenreCandidates[0].Value.Should().Be("Cached");
         await provider.DidNotReceive().LookupAsync(Arg.Any<LookupQuery>(), Arg.Any<CancellationToken>());
     }
 
@@ -181,6 +181,81 @@ public class LookupRunnerTests
         await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
 
         await cache.Received(1).SetAsync(Arg.Any<string>(), Arg.Any<LookupResult>(), Arg.Any<CancellationToken>());
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Provider trace assertions
+    // -----------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Trace_includes_one_entry_per_provider_with_status_ok_on_success()
+    {
+        var mb = MakeProvider("musicbrainz");
+        mb.LookupAsync(Arg.Any<LookupQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new LookupResult([new GenreCandidate("House", 0.7, "mb")], []));
+
+        var runner = MakeRunner(mb);
+        var run = await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
+
+        run.Trace.Should().HaveCount(1);
+        run.Trace[0].Provider.Should().Be("musicbrainz");
+        run.Trace[0].Status.Should().Be(ProviderTraceStatus.Ok);
+        run.Trace[0].Genres.Should().BeEquivalentTo(["House"]);
+        run.Trace[0].DurationMs.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Trace_marks_provider_as_skipped_when_can_handle_returns_false()
+    {
+        var acoustid = MakeProvider("acoustid");
+        acoustid.CanHandle(Arg.Any<LookupQuery>()).Returns(false);   // no fingerprint
+        var mb = MakeProvider("musicbrainz");
+
+        var runner = MakeRunner(acoustid, mb);
+        var run = await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
+
+        run.Trace.Should().HaveCount(2);
+        run.Trace[0].Provider.Should().Be("acoustid");
+        run.Trace[0].Status.Should().Be(ProviderTraceStatus.Skipped);
+        await acoustid.DidNotReceive().LookupAsync(Arg.Any<LookupQuery>(), Arg.Any<CancellationToken>());
+        run.Trace[1].Status.Should().Be(ProviderTraceStatus.NoHit);   // mb returns Empty
+    }
+
+    [Fact]
+    public async Task Trace_marks_provider_as_failed_when_lookup_throws()
+    {
+        var bad = MakeProvider("bad");
+        bad.LookupAsync(Arg.Any<LookupQuery>(), Arg.Any<CancellationToken>())
+            .Returns<LookupResult?>(_ => throw new InvalidOperationException("boom"));
+
+        var runner = MakeRunner(bad);
+        var run = await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
+
+        run.Trace.Should().HaveCount(1);
+        run.Trace[0].Status.Should().Be(ProviderTraceStatus.Failed);
+        run.Trace[0].ErrorMessage.Should().Be("boom");
+    }
+
+    [Fact]
+    public async Task Trace_is_empty_on_cache_hit()
+    {
+        // Cache hit short-circuits the provider chain — there's nothing to trace because no
+        // provider was called this run.
+        var provider = MakeProvider("musicbrainz");
+        var cache = Substitute.For<ILookupCache>();
+        cache.GetAsync(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(new LookupResult([new GenreCandidate("Cached", 1, "mb")], []));
+
+        var runner = new LookupRunner(
+            [provider],
+            new LookupOptions { Providers = ["musicbrainz"] },
+            cache,
+            NullLogger<LookupRunner>.Instance);
+
+        var run = await runner.RunAsync(new LookupQuery { Artist = "X", Title = "Y" });
+
+        run.Trace.Should().BeEmpty();
+        run.Result.GenreCandidates[0].Value.Should().Be("Cached");
     }
 
     private static IMetadataProvider MakeProvider(string name)

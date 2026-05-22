@@ -59,13 +59,13 @@ public sealed class LookupRunner : ILookupRunner
         _orderedProviders = ordered;
     }
 
-    public async Task<LookupResult> RunAsync(LookupQuery query, CancellationToken cancellationToken = default)
+    public async Task<LookupRunResult> RunAsync(LookupQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 
         if (!_enabled || _orderedProviders.Count == 0 || !query.HasAnySignal)
         {
-            return LookupResult.Empty;
+            return LookupRunResult.Empty;
         }
 
         var cacheKey = LookupCacheKey.From(query);
@@ -75,7 +75,9 @@ public sealed class LookupRunner : ILookupRunner
             if (cached is not null)
             {
                 _logger.LogDebug("Lookup cache hit {Key}", cacheKey);
-                return cached;
+                // Cache hit → no provider was actually called this run, so the trace is empty.
+                // The UI tooltip will show "(aus Cache)" elsewhere once we surface this state.
+                return new LookupRunResult(cached, []);
             }
         }
 
@@ -84,11 +86,19 @@ public sealed class LookupRunner : ILookupRunner
         var allSubGenres = new List<GenreCandidate>();
         Guid? releaseMbid = query.ReleaseMbid;
         Guid? recordingMbid = query.RecordingMbid;
+        var trace = new List<ProviderTraceEntry>(_orderedProviders.Count);
 
         foreach (var provider in _orderedProviders)
         {
-            if (!provider.CanHandle(currentQuery)) continue;
+            if (!provider.CanHandle(currentQuery))
+            {
+                trace.Add(new ProviderTraceEntry(
+                    provider.Name, ProviderTraceStatus.Skipped, [], [], null, null,
+                    ErrorMessage: null, DurationMs: 0));
+                continue;
+            }
 
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             LookupResult? providerResult;
             try
             {
@@ -98,15 +108,42 @@ public sealed class LookupRunner : ILookupRunner
             {
                 // Provider implementations promise not to throw on transport errors. If one does
                 // anyway, isolate the failure here — the rest of the chain still runs.
+                sw.Stop();
                 _logger.LogWarning(ex, "Provider {Name} threw unexpectedly: {Message}", provider.Name, ex.Message);
+                trace.Add(new ProviderTraceEntry(
+                    provider.Name, ProviderTraceStatus.Failed, [], [], null, null,
+                    ErrorMessage: ex.Message, DurationMs: sw.Elapsed.TotalMilliseconds));
                 continue;
             }
-            if (providerResult is null) continue;
+            sw.Stop();
+
+            if (providerResult is null)
+            {
+                trace.Add(new ProviderTraceEntry(
+                    provider.Name, ProviderTraceStatus.NoHit, [], [], null, null,
+                    ErrorMessage: null, DurationMs: sw.Elapsed.TotalMilliseconds));
+                continue;
+            }
 
             allGenres.AddRange(providerResult.GenreCandidates);
             allSubGenres.AddRange(providerResult.SubGenreCandidates);
             releaseMbid ??= providerResult.MbReleaseId;
             recordingMbid ??= providerResult.MbRecordingId;
+
+            var hasAnyData =
+                providerResult.GenreCandidates.Count > 0
+                || providerResult.SubGenreCandidates.Count > 0
+                || providerResult.MbRecordingId is not null
+                || providerResult.MbReleaseId is not null;
+            trace.Add(new ProviderTraceEntry(
+                provider.Name,
+                hasAnyData ? ProviderTraceStatus.Ok : ProviderTraceStatus.NoHit,
+                Genres: providerResult.GenreCandidates.Select(c => c.Value).Distinct(StringComparer.Ordinal).ToList(),
+                Subgenres: providerResult.SubGenreCandidates.Select(c => c.Value).Distinct(StringComparer.Ordinal).ToList(),
+                MbRecordingId: providerResult.MbRecordingId,
+                MbReleaseId: providerResult.MbReleaseId,
+                ErrorMessage: null,
+                DurationMs: sw.Elapsed.TotalMilliseconds));
 
             // Propagate any newly discovered MBID forward so the next provider can hit the
             // higher-precision MBID path (this is the AcoustID → MusicBrainz handshake).
@@ -123,7 +160,17 @@ public sealed class LookupRunner : ILookupRunner
             MbReleaseId: releaseMbid,
             MbRecordingId: recordingMbid);
 
-        if (_cache is not null)
+        // Don't cache a result that carries no useful signal — that would freeze a transient
+        // "no hit" (MB API was slow, our query was off, fingerprint was missing) into a 30-day
+        // empty answer. A subsequent button click should be free to re-query. MBIDs alone count
+        // as a useful signal because they enable a higher-precision MB lookup next time.
+        var hasUsefulSignal =
+            aggregate.GenreCandidates.Count > 0
+            || aggregate.SubGenreCandidates.Count > 0
+            || aggregate.MbReleaseId is not null
+            || aggregate.MbRecordingId is not null;
+
+        if (_cache is not null && hasUsefulSignal)
         {
             try
             {
@@ -135,7 +182,7 @@ public sealed class LookupRunner : ILookupRunner
             }
         }
 
-        return aggregate;
+        return new LookupRunResult(aggregate, trace);
     }
 
     private static List<GenreCandidate> MergeRanked(IEnumerable<GenreCandidate> candidates)

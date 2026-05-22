@@ -117,6 +117,25 @@ Per-dimension `min_confidence` thresholds gate `Analysis` / `Lookup` values *bef
 
 See `docs/ARCHITECTURE.md §6.2` for the full matrix.
 
+## Genre Resolution (taxonomy-aware)
+
+When `lookup.taxonomy_resolution: true` (default), genre / sub-genre values from the API are filtered through `taxonomy.yaml` before they touch `ResolvedTrackTags`. The flow lives in `RayTagger.Core.Mapping.TaxonomyGenreResolver` and is called from `TagMerger`:
+
+1. **Genre match search.** For each API `GenreCandidate` in confidence order, find every `taxonomy.genres` entry that appears as a whole word (case-insensitive) inside the candidate string. Longest match wins, ties broken by YAML order. Stop at the first candidate that produced any match.
+2. **Subgenre match search.** With `chosen_genre` fixed, search for `taxonomy.subgenres[chosen_genre]` entries in two sources: (a) the *rest* of the matched genre candidate (genre word cut out with `\b…\b` + whitespace collapse), and (b) every `SubGenreCandidate` from the API (e.g. Discogs `style`). Same "longest wins" rule, tiebreak by confidence then YAML order.
+3. **Apply with existing-tag protection.**
+   - **Genre:** write `chosen_genre` only if `existing_genre` is empty OR not in `taxonomy.genres`. Else keep existing.
+   - **Subgenre:** same rule against `taxonomy.subgenres[chosen_genre]`.
+4. **Fallback** (no genre matched at all + `existing_genre` empty): take the top-1 raw candidate value into `proposed_genre` so the user sees *something* they can later add to taxonomy. No fallback for subgenre — without a genre anchor it has no meaning.
+
+The resolver exposes a `CandidateTraceEntry` audit trail on `ResolvedTrackTags.GenreLookupTrace`. The UI shows it in the AppliedRulesDialog's second section; the CLI logs the chosen path per track.
+
+**Per-track button (UI):** The "API" column in the results grid calls `IPerTrackLookupService` which reuses the same `LookupRunnerBuilder` + `TaxonomyGenreResolver`. The button deliberately ignores `lookup.enabled` (that flag only gates the automatic scan-time lookup); it works whenever `lookup.providers` contains at least one provider with credentials (MusicBrainz always counts — no key needed).
+
+**Non-taxonomy highlight:** Genre / sub-genre values that are non-empty but missing from the taxonomy render in dark blue (`TaxonomyHighlightBrushConverter`) — same colour the BPM cell uses for "forced fallback", so the user has one consistent "this is off-vocabulary" cue.
+
+**Disable the resolver:** Set `lookup.taxonomy_resolution: false` to fall back to the legacy "top-1 candidate wins blindly" behaviour. Useful only when the user maintains tags by other means and doesn't want a taxonomy.
+
 ## Raycoon Conventions (mirrors sibling projects)
 
 - **Central Package Management**: all versions in `Directory.Packages.props`. Csproj `<PackageReference>` entries carry **no** `Version` attribute.

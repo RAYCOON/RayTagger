@@ -1,11 +1,13 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:RayTagger.Ui.ViewModels"
+        xmlns:mapping="using:RayTagger.Core.Mapping"
+        xmlns:models="using:RayTagger.Core.Models"
         x:Class="RayTagger.Ui.Views.AppliedRulesDialog"
         x:DataType="vm:TrackOutcomeViewModel"
         Title="Angewendete Regeln"
-        Width="520" Height="380"
-        MinWidth="320" MinHeight="220"
+        Width="640" Height="600"
+        MinWidth="400" MinHeight="320"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
     <Grid RowDefinitions="Auto,*,Auto" Margin="16">
@@ -20,29 +22,134 @@
                        ToolTip.Tip="{Binding Path}"/>
         </StackPanel>
 
-        <!-- Body. Either the list of fired rules or a "no rules matched" notice. -->
-        <Grid Grid.Row="1" Margin="0,12,0,0">
-            <TextBlock Text="Keine Regel hat gegriffen."
-                       Opacity="0.6"
-                       FontStyle="Italic"
-                       VerticalAlignment="Top"
-                       IsVisible="{Binding !AppliedRules.Count}"/>
-            <ScrollViewer VerticalScrollBarVisibility="Auto"
-                          IsVisible="{Binding AppliedRules.Count}">
-                <ItemsControl ItemsSource="{Binding AppliedRules}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="x:String">
-                            <Border Margin="0,2"
-                                    Padding="8,4"
-                                    CornerRadius="3"
-                                    Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-                                <TextBlock Text="{Binding}" TextWrapping="Wrap"/>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
-        </Grid>
+        <!-- Body: three stacked sections in pipeline order (Roh → Resolved → Rules):
+             1. ProviderTrace — what each API returned (raw)
+             2. LookupTrace — what the taxonomy resolver made of those candidates
+             3. AppliedRules — what mapping rules then changed on top of the resolved tags -->
+        <ScrollViewer Grid.Row="1" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12">
+
+                <!-- Section 1 (Roh): per-provider responses. Visible iff the runner actually
+                     called providers (bulk-scan run or API-button click). A cache hit on the
+                     bulk-scan suppresses the section because no providers were called. -->
+                <StackPanel Spacing="6" IsVisible="{Binding ProviderTrace, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <TextBlock Text="API-Antworten"
+                               FontWeight="SemiBold"
+                               FontSize="12"
+                               Opacity="0.8"/>
+                    <ItemsControl ItemsSource="{Binding ProviderTrace}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:ProviderTraceEntry">
+                                <Border Margin="0,2"
+                                        Padding="8,6"
+                                        CornerRadius="3"
+                                        Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+                                    <StackPanel Spacing="2">
+                                        <!-- Headline: provider, status, duration -->
+                                        <TextBlock TextWrapping="Wrap">
+                                            <Run Text="{Binding Provider}" FontWeight="SemiBold"/>
+                                            <Run Text=" ("/>
+                                            <Run Text="{Binding Status}"/>
+                                            <Run Text=", "/>
+                                            <Run Text="{Binding DurationMs, StringFormat={}{0:F0} ms}"/>
+                                            <Run Text=")"/>
+                                        </TextBlock>
+                                        <!-- Genres line (visible iff at least one) -->
+                                        <TextBlock Opacity="0.85" FontSize="11" TextWrapping="Wrap"
+                                                   IsVisible="{Binding Genres.Count}">
+                                            <Run Text="genres: "/>
+                                            <Run Text="{Binding Genres, Converter={x:Static vm:CommaListConverter.Instance}}"/>
+                                        </TextBlock>
+                                        <!-- Subgenres / styles line -->
+                                        <TextBlock Opacity="0.85" FontSize="11" TextWrapping="Wrap"
+                                                   IsVisible="{Binding Subgenres.Count}">
+                                            <Run Text="styles: "/>
+                                            <Run Text="{Binding Subgenres, Converter={x:Static vm:CommaListConverter.Instance}}"/>
+                                        </TextBlock>
+                                        <!-- MBID line (acoustid, musicbrainz) -->
+                                        <TextBlock Opacity="0.75" FontSize="11" FontFamily="Menlo,Consolas,monospace"
+                                                   IsVisible="{Binding MbRecordingId, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                            <Run Text="MBID: "/>
+                                            <Run Text="{Binding MbRecordingId}"/>
+                                        </TextBlock>
+                                        <!-- Error message line (failed only) -->
+                                        <TextBlock Opacity="0.85" FontSize="11" FontStyle="Italic" Foreground="#aa1e1e"
+                                                   IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                   Text="{Binding ErrorMessage}"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Section 2 (Resolved): taxonomy-aware genre resolver trace. -->
+                <StackPanel Spacing="6" IsVisible="{Binding LookupTrace, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <TextBlock Text="Taxonomy-Resolution"
+                               FontWeight="SemiBold"
+                               FontSize="12"
+                               Opacity="0.8"/>
+                    <ItemsControl ItemsSource="{Binding LookupTrace}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="mapping:CandidateTraceEntry">
+                                <Border Margin="0,2"
+                                        Padding="8,6"
+                                        CornerRadius="3"
+                                        Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock TextWrapping="Wrap">
+                                            <Run Text="«"/>
+                                            <Run Text="{Binding ApiValue}" FontWeight="SemiBold"/>
+                                            <Run Text="» aus "/>
+                                            <Run Text="{Binding ApiSource}"/>
+                                            <Run Text=", Confidence "/>
+                                            <Run Text="{Binding Confidence, StringFormat={}{0:F2}}"/>
+                                        </TextBlock>
+                                        <TextBlock Opacity="0.85" FontSize="11"
+                                                   IsVisible="{Binding ChosenGenre, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                            <Run Text="→ Genre "/>
+                                            <Run Text="{Binding ChosenGenre}" FontWeight="SemiBold"/>
+                                            <Run Text=", Sub-Genre "/>
+                                            <Run Text="{Binding ChosenSubgenre, TargetNullValue='(keiner)'}" FontWeight="SemiBold"/>
+                                        </TextBlock>
+                                        <TextBlock Opacity="0.6" FontSize="11" FontStyle="Italic"
+                                                   IsVisible="{Binding ChosenGenre, Converter={x:Static ObjectConverters.IsNull}}"
+                                                   Text="→ kein Taxonomy-Match"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Section 3 (Rules): mapping rules that fired on top of the resolved tags. -->
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Angewendete Regeln"
+                               FontWeight="SemiBold"
+                               FontSize="12"
+                               Opacity="0.8"/>
+                    <TextBlock Text="Keine Regel hat gegriffen."
+                               Opacity="0.6"
+                               FontStyle="Italic"
+                               IsVisible="{Binding !AppliedRules.Count}"/>
+                    <ItemsControl ItemsSource="{Binding AppliedRules}"
+                                  IsVisible="{Binding AppliedRules.Count}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <Border Margin="0,2"
+                                        Padding="8,4"
+                                        CornerRadius="3"
+                                        Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+                                    <TextBlock Text="{Binding}" TextWrapping="Wrap"/>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
 
         <!-- Close button. Mirrors the rule-test dialog footer. -->
         <StackPanel Grid.Row="2"

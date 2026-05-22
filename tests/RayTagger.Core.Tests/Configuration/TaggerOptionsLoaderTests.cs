@@ -304,4 +304,105 @@ public class TaggerOptionsLoaderTests
         act.Should().Throw<ConfigurationException>()
             .WithMessage("*outside plausible musical bounds*");
     }
+
+    [Fact]
+    public void Rate_limits_default_to_published_provider_policies()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Lookup.RateLimits.AcoustidMs.Should().Be(RateLimitsOptions.DefaultAcoustidMs);
+        options.Lookup.RateLimits.MusicbrainzMs.Should().Be(RateLimitsOptions.DefaultMusicbrainzMs);
+        options.Lookup.RateLimits.DiscogsMs.Should().Be(RateLimitsOptions.DefaultDiscogsMs);
+        options.Lookup.RateLimits.LastfmMs.Should().Be(RateLimitsOptions.DefaultLastfmMs);
+    }
+
+    [Fact]
+    public void Rate_limits_can_be_overridden_per_provider()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            lookup:
+              rate_limits:
+                acoustid_ms:    500
+                musicbrainz_ms: 2000
+                discogs_ms:     1500
+                lastfm_ms:      300
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Lookup.RateLimits.AcoustidMs.Should().Be(500);
+        options.Lookup.RateLimits.MusicbrainzMs.Should().Be(2000);
+        options.Lookup.RateLimits.DiscogsMs.Should().Be(1500);
+        options.Lookup.RateLimits.LastfmMs.Should().Be(300);
+    }
+
+    [Fact]
+    public void Partial_rate_limits_block_keeps_other_defaults()
+    {
+        // Only override MB — the other three must retain their documented defaults so a sloppy
+        // user can't accidentally disable AcoustID throttling by writing only one entry.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            lookup:
+              rate_limits:
+                musicbrainz_ms: 1500
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Lookup.RateLimits.MusicbrainzMs.Should().Be(1500);
+        options.Lookup.RateLimits.AcoustidMs.Should().Be(RateLimitsOptions.DefaultAcoustidMs);
+        options.Lookup.RateLimits.DiscogsMs.Should().Be(RateLimitsOptions.DefaultDiscogsMs);
+        options.Lookup.RateLimits.LastfmMs.Should().Be(RateLimitsOptions.DefaultLastfmMs);
+    }
+
+    [Fact]
+    public void Negative_rate_limit_fails_validation()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            lookup:
+              rate_limits:
+                musicbrainz_ms: -100
+            """;
+
+        var act = () => TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        var ex = act.Should().Throw<ConfigurationException>().Which;
+        ex.Errors.Should().Contain(e =>
+            e.YamlPath == "lookup.rate_limits.musicbrainz_ms"
+            && e.Reason.Contains(">= 0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Zero_rate_limit_is_accepted()
+    {
+        // 0 = "no client-side throttling". Foot-gun, but valid — the user might be testing
+        // against a local MB mirror where rate-limiting isn't enforced.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            lookup:
+              rate_limits:
+                musicbrainz_ms: 0
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Lookup.RateLimits.MusicbrainzMs.Should().Be(0);
+    }
 }

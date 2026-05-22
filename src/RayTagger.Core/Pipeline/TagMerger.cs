@@ -1,4 +1,5 @@
 using RayTagger.Core.Configuration;
+using RayTagger.Core.Mapping;
 using RayTagger.Core.Models;
 
 namespace RayTagger.Core.Pipeline;
@@ -10,9 +11,16 @@ namespace RayTagger.Core.Pipeline;
 /// for the policy matrix.
 /// </summary>
 /// <remarks>
-/// Genre / SubGenre seeds come from the highest-confidence <see cref="GenreCandidate"/> per slot.
-/// Mapping rules can still overwrite this downstream — rules are <see cref="TagFieldSource.Rules"/>
-/// and always win regardless of policy.
+/// Genre / SubGenre resolution has two modes:
+/// <list type="bullet">
+///   <item>Legacy (<c>resolver</c> or <c>taxonomy</c> null): top-1 <see cref="GenreCandidate"/>
+///   wins blindly, gated only by <c>existing_tags_policy</c>.</item>
+///   <item>Taxonomy-aware (both supplied): whole-word match against the taxonomy with
+///   longest-match-wins, existing-tag protection, and Subgenre splitting — see
+///   <see cref="TaxonomyGenreResolver"/>.</item>
+/// </list>
+/// Mapping rules run AFTER this merger and can still overwrite the result — rules are
+/// <see cref="TagFieldSource.Rules"/> and always win regardless of policy.
 /// </remarks>
 public static class TagMerger
 {
@@ -21,7 +29,10 @@ public static class TagMerger
         AnalysisResult analysis,
         LookupResult? lookup,
         AnalysisOptions analysisConfig,
-        ExistingTagsPolicy policy)
+        ExistingTagsPolicy policy,
+        Taxonomy? taxonomy = null,
+        TaxonomyGenreResolver? resolver = null,
+        IReadOnlyList<ProviderTraceEntry>? providerTrace = null)
     {
         ArgumentNullException.ThrowIfNull(existing);
         ArgumentNullException.ThrowIfNull(analysis);
@@ -48,10 +59,30 @@ public static class TagMerger
             analysisConfig.Energy.MinConfidence,
             policy);
 
-        var topGenre = lookup?.GenreCandidates.Count > 0 ? lookup.GenreCandidates[0] : null;
-        var topSubGenre = lookup?.SubGenreCandidates.Count > 0 ? lookup.SubGenreCandidates[0] : null;
-        var genre = MergeLookupString(existing.Genre, topGenre, policy);
-        var subgenre = MergeLookupString(existing.SubGenre, topSubGenre, policy);
+        ResolvedField<string> genre;
+        ResolvedField<string> subgenre;
+        IReadOnlyList<CandidateTraceEntry>? trace = null;
+
+        if (lookup is not null && taxonomy is not null && resolver is not null)
+        {
+            var resolution = resolver.Resolve(
+                lookup.GenreCandidates,
+                lookup.SubGenreCandidates,
+                taxonomy,
+                existing.Genre,
+                existing.SubGenre);
+
+            genre = BuildResolvedFromResolution(existing.Genre, resolution.ProposedGenre, resolution.MatchedCandidate);
+            subgenre = BuildResolvedFromResolution(existing.SubGenre, resolution.ProposedSubgenre, resolution.MatchedCandidate);
+            trace = resolution.Trace;
+        }
+        else
+        {
+            var topGenre = lookup?.GenreCandidates.Count > 0 ? lookup.GenreCandidates[0] : null;
+            var topSubGenre = lookup?.SubGenreCandidates.Count > 0 ? lookup.SubGenreCandidates[0] : null;
+            genre = MergeLookupString(existing.Genre, topGenre, policy);
+            subgenre = MergeLookupString(existing.SubGenre, topSubGenre, policy);
+        }
 
         // Mood / SetPosition aren't populated by analyzers or lookup today — they come either
         // from existing tags on disk or from a mapping rule's `set:`. Seed from existing.
@@ -65,7 +96,29 @@ public static class TagMerger
             kv => new ResolvedField<string>(kv.Value, TagFieldSource.Existing, 1),
             StringComparer.OrdinalIgnoreCase);
 
-        return new ResolvedTrackTags(genre, subgenre, bpm, key, energy, mood, setPosition, custom);
+        var result = new ResolvedTrackTags(genre, subgenre, bpm, key, energy, mood, setPosition, custom);
+        if (trace is not null) result = result with { GenreLookupTrace = trace };
+        if (providerTrace is not null) result = result with { ProviderTrace = providerTrace };
+        return result;
+    }
+
+    /// <summary>
+    /// Wraps a resolver-produced proposed value into a <see cref="ResolvedField{T}"/>. When the
+    /// resolver returned null (= existing is protected and wins), we re-emit the existing value
+    /// with <see cref="TagFieldSource.Existing"/>; otherwise <see cref="TagFieldSource.Lookup"/>
+    /// with the source candidate's confidence.
+    /// </summary>
+    private static ResolvedField<string> BuildResolvedFromResolution(
+        string? existing,
+        string? proposed,
+        GenreCandidate? sourceCandidate)
+    {
+        if (proposed is null)
+        {
+            return new ResolvedField<string>(existing, TagFieldSource.Existing, existing is null ? 0 : 1);
+        }
+        var confidence = sourceCandidate?.Confidence ?? 0.5;
+        return new ResolvedField<string>(proposed, TagFieldSource.Lookup, confidence);
     }
 
     private static ResolvedField<string> MergeLookupString(

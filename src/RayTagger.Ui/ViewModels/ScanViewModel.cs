@@ -22,6 +22,7 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     private readonly ScanCoordinator _coordinator;
     private readonly ITagReader _reader;
     private readonly IMappingRuleEngine _ruleEngine;
+    private readonly ITrackLookupExecutor _lookupExecutor;
     private readonly ILogger<ScanViewModel> _logger;
     private CancellationTokenSource? _cts;
     private CancellationTokenSource? _discoveryCts;
@@ -86,15 +87,22 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
     /// </summary>
     public ObservableCollection<RowDiffSummary> DiffSummary { get; } = [];
 
-    public ScanViewModel(ScanCoordinator coordinator, ITagReader reader, IMappingRuleEngine ruleEngine, ILogger<ScanViewModel> logger)
+    public ScanViewModel(
+        ScanCoordinator coordinator,
+        ITagReader reader,
+        IMappingRuleEngine ruleEngine,
+        ITrackLookupExecutor lookupExecutor,
+        ILogger<ScanViewModel> logger)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(ruleEngine);
+        ArgumentNullException.ThrowIfNull(lookupExecutor);
         ArgumentNullException.ThrowIfNull(logger);
         _coordinator = coordinator;
         _reader = reader;
         _ruleEngine = ruleEngine;
+        _lookupExecutor = lookupExecutor;
         _logger = logger;
 
         Filters = new ColumnFilterViewModel(Outcomes);
@@ -141,8 +149,9 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
         {
             await foreach (var preview in _coordinator.DiscoverAsync(sourceDir, token).ConfigureAwait(true))
             {
-                var vm = new TrackOutcomeViewModel(preview.File, preview.Existing, preview.ErrorMessage);
+                var vm = new TrackOutcomeViewModel(preview.File, preview.Existing, preview.ErrorMessage, _lookupExecutor);
                 vm.HasSidecar = _coordinator.HasSidecar(preview.File.Path);
+                vm.UpdateTaxonomy(_coordinator.LastTaxonomy);
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     Outcomes.Add(vm);
@@ -232,7 +241,13 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
 
         // Reset every preview row to the empty status so prior CNG/OK/ERR badges from a previous
         // scan don't bleed into this run. Pipeline outcomes will repaint them via UpdateFromOutcome.
-        foreach (var row in Outcomes) row.ResetStatus();
+        // Also refresh each row's taxonomy snapshot — a new scan may have loaded a different
+        // taxonomy.yaml, and the dark-blue "non-taxonomy" highlight needs to track it.
+        foreach (var row in Outcomes)
+        {
+            row.ResetStatus();
+            row.UpdateTaxonomy(_coordinator.LastTaxonomy);
+        }
 
         // Lookup table for outcome-matching. Keep separate from Outcomes because the pipeline
         // emits in completion order (not discovery order), and we don't want O(N²) per-outcome.
@@ -271,10 +286,11 @@ public sealed partial class ScanViewModel : ObservableObject, IDisposable
                     {
                         // Race: file appeared on disk after discovery enumerated. Add as a new
                         // row so the user still sees it instead of silently dropping it.
-                        var vm = new TrackOutcomeViewModel(outcome, existing)
+                        var vm = new TrackOutcomeViewModel(outcome, existing, _lookupExecutor)
                         {
                             HasSidecar = _coordinator.HasSidecar(outcome.File.Path),
                         };
+                        vm.UpdateTaxonomy(_coordinator.LastTaxonomy);
                         Outcomes.Add(vm);
                         byPath[outcome.File.Path] = vm;
                         row = vm;
