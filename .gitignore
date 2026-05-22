@@ -30,7 +30,13 @@ coverage*.xml
 Thumbs.db
 
 # ---------- Tagger local state ----------
-# User secrets / API keys (must never be committed)
+# Live working configs + secrets — the whole config/ directory is excluded so
+# tagger.yaml/mappings.yaml/taxonomy.yaml/.env never reach GitHub.
+# samples/*.example.yaml is the committed reference template.
+config/
+
+# Belt-and-braces: any stray .env or *.local.yaml anywhere in the tree.
+.env
 samples/.env
 tagger.local.yaml
 mappings.local.yaml

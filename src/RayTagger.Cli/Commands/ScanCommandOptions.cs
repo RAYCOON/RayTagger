@@ -11,7 +11,7 @@ internal sealed class ScanCommandOptions
 {
     public Option<FileInfo?> Config { get; } = new("--config", "-c")
     {
-        Description = "Path to tagger.yaml. Defaults to ./tagger.yaml in the current directory.",
+        Description = "Path to tagger.yaml. Resolution order: --config / $RAYTAGGER_CONFIG / ./tagger.yaml / ./config/tagger.yaml / walk up parents.",
     };
 
     public Option<DirectoryInfo?> Source { get; } = new("--source", "-s")

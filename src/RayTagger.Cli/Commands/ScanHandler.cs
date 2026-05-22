@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using RayTagger.Cli.Hosting;
 using RayTagger.Cli.Output;
 using RayTagger.Core.Configuration;
+using RayTagger.Core.IO;
 using RayTagger.Core.Mapping;
 using RayTagger.Core.Pipeline;
 using RayTagger.Hosting;
@@ -101,7 +102,9 @@ internal static class ScanHandler
 
     private static (TaggerOptions Options, MappingRuleSet Rules) LoadConfiguration(FileInfo? configFile, DirectoryInfo? sourceOverride)
     {
-        var configPath = configFile?.FullName ?? Path.Combine(Environment.CurrentDirectory, "tagger.yaml");
+        var configPath = configFile?.FullName
+            ?? ConfigPathDiscovery.Find(Environment.CurrentDirectory)
+            ?? Path.Combine(Environment.CurrentDirectory, ConfigPathDiscovery.ConfigFileName);
         var options = TaggerOptionsLoader.Load(configPath);
 
         if (sourceOverride is not null)

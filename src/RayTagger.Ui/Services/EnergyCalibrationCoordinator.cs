@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using RayTagger.Analysis;
 using RayTagger.Core.Configuration;
+using RayTagger.Core.IO;
 using RayTagger.Hosting;
 
 namespace RayTagger.Ui.Services;
@@ -124,15 +125,9 @@ public sealed class EnergyCalibrationCoordinator
 
     private static TaggerOptions LoadOrDefaults(string folder)
     {
-        // Use the same lookup pattern as ScanCoordinator: tagger.yaml next to the folder, then one
-        // up. Returns defaults when nothing found — but those defaults include the default
-        // calibration_file path (./energy-calibration.yaml relative to the folder), so calibration
-        // still has a sane place to write to.
-        var here = Path.Combine(folder, "tagger.yaml");
-        var oneUp = Path.GetDirectoryName(folder.TrimEnd(Path.DirectorySeparatorChar));
-        var parent = oneUp is null ? null : Path.Combine(oneUp, "tagger.yaml");
-        string? configPath = File.Exists(here) ? here : (parent is not null && File.Exists(parent) ? parent : null);
-
+        // Shared discovery order with ScanCoordinator / CLI: env-var override → walk up from the
+        // folder checking ./tagger.yaml and ./config/tagger.yaml.
+        var configPath = ConfigPathDiscovery.Find(folder);
         if (configPath is not null)
         {
             return TaggerOptionsLoader.Load(configPath);

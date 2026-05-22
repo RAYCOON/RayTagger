@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RayTagger.Core.Configuration;
+using RayTagger.Core.IO;
 using RayTagger.Core.Mapping;
 using RayTagger.Core.Models;
 using RayTagger.Core.Pipeline;
@@ -405,24 +406,8 @@ public sealed class ScanCoordinator
     /// the user picks a sub-album from a library that has one central config). Returns null when
     /// neither is present so the caller can fall back to in-memory defaults.
     /// </summary>
-    /// <remarks>
-    /// Uses <see cref="DirectoryInfo.Parent"/> for the upward walk — handles mixed
-    /// <c>\</c>/<c>/</c> separators correctly on Windows where <see cref="Path.GetDirectoryName(string)"/>
-    /// + a single trailing-char trim can miss the parent.
-    /// </remarks>
     private static string? FindConfig(string sourceDirectory)
-    {
-        var inSource = Path.Combine(sourceDirectory, "tagger.yaml");
-        if (File.Exists(inSource)) return inSource;
-
-        var parent = new DirectoryInfo(sourceDirectory).Parent;
-        if (parent is not null)
-        {
-            var inParent = Path.Combine(parent.FullName, "tagger.yaml");
-            if (File.Exists(inParent)) return inParent;
-        }
-        return null;
-    }
+        => ConfigPathDiscovery.Find(sourceDirectory);
 }
 
 /// <summary>

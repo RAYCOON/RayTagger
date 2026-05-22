@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using RayTagger.Core.Configuration;
+using RayTagger.Core.IO;
 using RayTagger.Core.Mapping;
 using RayTagger.Core.Models;
 using RayTagger.Metadata;
@@ -271,27 +272,18 @@ public sealed partial class RuleEditorViewModel : ObservableObject
         var dir = Path.GetDirectoryName(mappingsPath);
         if (dir is null) return;
 
-        var candidates = new List<string> { Path.Combine(dir, "tagger.yaml") };
-        var parent = Directory.GetParent(dir)?.FullName;
-        if (parent is not null)
-        {
-            candidates.Add(Path.Combine(parent, "tagger.yaml"));
-        }
+        var candidate = ConfigPathDiscovery.Find(dir);
+        if (candidate is null) return;
 
-        foreach (var candidate in candidates)
+        try
         {
-            if (!File.Exists(candidate)) continue;
-            try
-            {
-                var opts = TaggerOptionsLoader.Load(candidate);
-                _localTaxonomy = opts.Taxonomy.Loaded;
-                _logger.LogInformation("Local taxonomy loaded from {Path} for rule-editor tests", candidate);
-                return;
-            }
-            catch (Exception ex) when (ex is ConfigurationException or IOException)
-            {
-                _logger.LogDebug(ex, "Failed to load taxonomy from candidate {Path}", candidate);
-            }
+            var opts = TaggerOptionsLoader.Load(candidate);
+            _localTaxonomy = opts.Taxonomy.Loaded;
+            _logger.LogInformation("Local taxonomy loaded from {Path} for rule-editor tests", candidate);
+        }
+        catch (Exception ex) when (ex is ConfigurationException or IOException)
+        {
+            _logger.LogDebug(ex, "Failed to load taxonomy from candidate {Path}", candidate);
         }
     }
 

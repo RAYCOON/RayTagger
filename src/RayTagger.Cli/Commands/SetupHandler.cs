@@ -6,6 +6,7 @@ using RayTagger.Analysis.Bootstrap;
 using RayTagger.Analysis.Internal;
 using RayTagger.Cli.Hosting;
 using RayTagger.Core.Configuration;
+using RayTagger.Core.IO;
 using RayTagger.Hosting;
 using Spectre.Console;
 
@@ -110,7 +111,9 @@ internal static class SetupHandler
 
     private static TaggerOptions LoadOptions(FileInfo? configFile)
     {
-        var configPath = configFile?.FullName ?? Path.Combine(Environment.CurrentDirectory, "tagger.yaml");
+        var configPath = configFile?.FullName
+            ?? ConfigPathDiscovery.Find(Environment.CurrentDirectory)
+            ?? Path.Combine(Environment.CurrentDirectory, ConfigPathDiscovery.ConfigFileName);
         return TaggerOptionsLoader.Load(configPath);
     }
 

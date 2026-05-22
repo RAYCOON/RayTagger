@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using RayTagger.Analysis;
 using RayTagger.Cli.Hosting;
 using RayTagger.Core.Configuration;
+using RayTagger.Core.IO;
 using RayTagger.Hosting;
 using Spectre.Console;
 
@@ -41,7 +42,9 @@ internal static class CalibrateEnergyHandler
         TaggerOptions options;
         try
         {
-            var configPath = configFile?.FullName ?? Path.Combine(Environment.CurrentDirectory, "tagger.yaml");
+            var configPath = configFile?.FullName
+                ?? ConfigPathDiscovery.Find(Environment.CurrentDirectory)
+                ?? Path.Combine(Environment.CurrentDirectory, ConfigPathDiscovery.ConfigFileName);
             options = TaggerOptionsLoader.Load(configPath);
         }
         catch (ConfigurationException ex)

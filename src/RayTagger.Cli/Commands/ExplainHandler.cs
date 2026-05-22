@@ -1,6 +1,7 @@
 using System.CommandLine;
 using RayTagger.Cli.Hosting;
 using RayTagger.Core.Configuration;
+using RayTagger.Core.IO;
 using RayTagger.Core.Mapping;
 using RayTagger.Core.Models;
 using RayTagger.Core.Pipeline;
@@ -37,7 +38,9 @@ internal static class ExplainHandler
         MappingRuleSet rules;
         try
         {
-            var configPath = configFile?.FullName ?? Path.Combine(Environment.CurrentDirectory, "tagger.yaml");
+            var configPath = configFile?.FullName
+                ?? ConfigPathDiscovery.Find(Environment.CurrentDirectory)
+                ?? Path.Combine(Environment.CurrentDirectory, ConfigPathDiscovery.ConfigFileName);
             options = TaggerOptionsLoader.Load(configPath);
             // Pass the loaded taxonomy so the rules loader enforces allowlists and the engine
             // can resolve normalise_genre aliases below. Otherwise `explain` would silently

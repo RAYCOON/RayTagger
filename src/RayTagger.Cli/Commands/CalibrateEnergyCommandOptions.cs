@@ -16,7 +16,7 @@ internal sealed class CalibrateEnergyCommandOptions
 
     public Option<FileInfo?> Config { get; } = new("--config", "-c")
     {
-        Description = "Path to tagger.yaml. Defaults to ./tagger.yaml in the current directory.",
+        Description = "Path to tagger.yaml. Resolution order: --config / $RAYTAGGER_CONFIG / ./tagger.yaml / ./config/tagger.yaml / walk up parents.",
     };
 
     public Option<FileInfo?> Output { get; } = new("--output", "-o")
