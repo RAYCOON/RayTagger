@@ -33,7 +33,12 @@ public class EnergyCalibrationServiceTests
             SpectralFlux: flux,
             OnsetRate: onset,
             Danceability: dance,
-            BeatsLoudness: beats);
+            BeatsLoudness: beats,
+            SpectralCentroidMean: null,
+            SpectralComplexityMean: null,
+            DynamicComplexity: null,
+            ChordsChangesRate: null,
+            ChordsStrengthMean: null);
 
     [Theory]
     // Reference values for [1..20] via NIST type 7 / Excel PERCENTILE.INC:
@@ -134,7 +139,9 @@ public class EnergyCalibrationServiceTests
                 {
                     return new EssentiaResult(null, null, null, null, null, null,
                         AverageLoudness: 0.8, SpectralFlux: null, OnsetRate: 5.0,
-                        Danceability: 1.5, BeatsLoudness: 0.1);
+                        Danceability: 1.5, BeatsLoudness: 0.1,
+                        SpectralCentroidMean: null, SpectralComplexityMean: null,
+                        DynamicComplexity: null, ChordsChangesRate: null, ChordsStrengthMean: null);
                 }
                 return Result(0.1, 0.1, 5.0, 1.6, 0.8);
             });

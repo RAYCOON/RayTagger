@@ -1,0 +1,13 @@
+# Pinned dependencies for raytagger-genre-classifier.
+#
+# essentia-tensorflow ships Essentia compiled with TensorFlow support — the same
+# essentia_streaming_extractor_music binary RayTagger already shells out to plus
+# the TF predictors used by the genre models. Pulls in numpy + tensorflow as
+# transitive deps.
+#
+# Python 3.9–3.12 supported on macOS / Linux (Essentia publishes cp39–cp312 wheels
+# on PyPI). 3.13 wheels are not yet available — pip will fall back to building
+# from source, which needs Python headers + a C++ toolchain.
+#
+# Smoke-tested with this exact version on macOS 15 arm64 / Python 3.9.
+essentia-tensorflow==2.1b6.dev1389

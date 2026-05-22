@@ -53,11 +53,21 @@ internal static class EssentiaJsonParser
         var danceability = TryReadDouble(root, "rhythm", "danceability");
         var beatsLoudness = TryReadAggregateMean(root, "rhythm", "beats_loudness");
 
+        // Descriptors used by the heuristic genre classifier (DSP-only, present in every
+        // default Essentia run). See docs/PLAN_GENRE_CLASSIFICATION.md §3.5.
+        var spectralCentroidMean = TryReadAggregateMean(root, "lowlevel", "spectral_centroid");
+        var spectralComplexityMean = TryReadAggregateMean(root, "lowlevel", "spectral_complexity");
+        var dynamicComplexity = TryReadDouble(root, "lowlevel", "dynamic_complexity");
+        var chordsChangesRate = TryReadDouble(root, "tonal", "chords_changes_rate");
+        var chordsStrengthMean = TryReadAggregateMean(root, "tonal", "chords_strength");
+
         return new EssentiaResult(
             bpm, bpmConfidence,
             keyKey, keyScale, keyStrength,
             spectralEnergy,
-            averageLoudness, spectralFlux, onsetRate, danceability, beatsLoudness);
+            averageLoudness, spectralFlux, onsetRate, danceability, beatsLoudness,
+            spectralCentroidMean, spectralComplexityMean, dynamicComplexity,
+            chordsChangesRate, chordsStrengthMean);
     }
 
     public static EssentiaResult ParseString(string json)

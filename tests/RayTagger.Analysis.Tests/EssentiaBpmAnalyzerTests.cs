@@ -25,7 +25,8 @@ public class EssentiaBpmAnalyzerTests
                 .Returns(bpm is null
                     ? null
                     : new EssentiaResult(Bpm: bpm, BpmConfidence: confidence,
-                        null, null, null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null, null,
+                        null, null, null, null, null)));
 
     [Fact]
     public async Task Returns_raw_when_no_range_configured()

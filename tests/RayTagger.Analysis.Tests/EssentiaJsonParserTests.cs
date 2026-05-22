@@ -115,6 +115,56 @@ public class EssentiaJsonParserTests
         parsed.OnsetRate.Should().BeNull();
         parsed.Danceability.Should().BeNull();
         parsed.BeatsLoudness.Should().BeNull();
+        parsed.SpectralCentroidMean.Should().BeNull();
+        parsed.SpectralComplexityMean.Should().BeNull();
+        parsed.DynamicComplexity.Should().BeNull();
+        parsed.ChordsChangesRate.Should().BeNull();
+        parsed.ChordsStrengthMean.Should().BeNull();
+    }
+
+    [Fact]
+    public void Reads_heuristic_classifier_descriptors()
+    {
+        // Shape mirrors a real essentia_streaming_extractor_music JSON: spectral_centroid /
+        // spectral_complexity / chords_strength are frame-aggregated (mean/var/min/max);
+        // dynamic_complexity / chords_changes_rate are bare scalars at the top level of
+        // their parent section.
+        const string json = """
+            {
+              "lowlevel": {
+                "spectral_centroid":   { "mean": 2450.0, "var": 1200.0, "min": 1000.0, "max": 5500.0 },
+                "spectral_complexity": { "mean": 12.3,   "var": 0.4,    "min": 4.0,    "max": 25.0  },
+                "dynamic_complexity":  3.7
+              },
+              "tonal": {
+                "chords_changes_rate": 0.078,
+                "chords_strength":     { "mean": 0.56, "var": 0.02, "min": 0.0, "max": 0.95 }
+              }
+            }
+            """;
+
+        var parsed = EssentiaJsonParser.ParseString(json);
+
+        parsed.SpectralCentroidMean.Should().BeApproximately(2450.0, 1e-3);
+        parsed.SpectralComplexityMean.Should().BeApproximately(12.3, 1e-3);
+        parsed.DynamicComplexity.Should().BeApproximately(3.7, 1e-3);
+        parsed.ChordsChangesRate.Should().BeApproximately(0.078, 1e-6);
+        parsed.ChordsStrengthMean.Should().BeApproximately(0.56, 1e-4);
+    }
+
+    [Fact]
+    public void Returns_null_for_heuristic_descriptors_when_absent()
+    {
+        // No lowlevel/tonal block at all → all classifier descriptors null.
+        const string json = """{"rhythm": {"bpm": 128.0}}""";
+
+        var parsed = EssentiaJsonParser.ParseString(json);
+
+        parsed.SpectralCentroidMean.Should().BeNull();
+        parsed.SpectralComplexityMean.Should().BeNull();
+        parsed.DynamicComplexity.Should().BeNull();
+        parsed.ChordsChangesRate.Should().BeNull();
+        parsed.ChordsStrengthMean.Should().BeNull();
     }
 
     [Fact]

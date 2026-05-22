@@ -96,6 +96,44 @@ internal static class TaggerOptionsValidator
         ValidateAnalyzer(analysis.Key, "analysis.key", errors);
         ValidateAnalyzer(analysis.Energy, "analysis.energy", errors);
         ValidateAnalyzer(analysis.Fingerprint, "analysis.fingerprint", errors);
+        ValidateGenreClassifier(analysis.GenreClassifier, errors);
+    }
+
+    private static void ValidateGenreClassifier(GenreClassifierOptions classifier, List<ConfigurationError> errors)
+    {
+        ValidateMinConfidence(
+            classifier.Heuristic.MinConfidence,
+            "analysis.genre_classifier.heuristic.min_confidence",
+            errors);
+        ValidateTensorflowModel(
+            classifier.Tensorflow.GenreElectronic,
+            "analysis.genre_classifier.tensorflow.genre_electronic",
+            errors);
+        ValidateTensorflowModel(
+            classifier.Tensorflow.MtgJamendo,
+            "analysis.genre_classifier.tensorflow.mtg_jamendo",
+            errors);
+        ValidateTensorflowModel(
+            classifier.Tensorflow.DiscogsEffnet,
+            "analysis.genre_classifier.tensorflow.discogs_effnet",
+            errors);
+    }
+
+    private static void ValidateTensorflowModel(TensorflowModelOptions opts, string pathPrefix, List<ConfigurationError> errors)
+    {
+        ValidateMinConfidence(opts.MinConfidence, $"{pathPrefix}.min_confidence", errors);
+        ValidateMinConfidence(opts.AggregatePerCandidateFloor, $"{pathPrefix}.aggregate_per_candidate_floor", errors);
+        ValidateMinConfidence(opts.AggregateMinTotal, $"{pathPrefix}.aggregate_min_total", errors);
+    }
+
+    private static void ValidateMinConfidence(double value, string path, List<ConfigurationError> errors)
+    {
+        if (value is < 0 or > 1)
+        {
+            errors.Add(new ConfigurationError(
+                path,
+                $"Must be in [0,1], got {value}."));
+        }
     }
 
     private static void ValidateAnalyzer(AnalyzerOptions analyzer, string pathPrefix, List<ConfigurationError> errors)

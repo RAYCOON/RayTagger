@@ -255,6 +255,194 @@ public sealed class NativeToolBootstrapperTests : IDisposable
         return (gzMs.ToArray(), binary);
     }
 
+    // -- Model bootstrap tests --------------------------------------------------------------
+
+    [Fact]
+    public async Task Downloads_all_model_files_and_writes_version_sentinel()
+    {
+        var pb = new byte[] { 1, 2, 3, 4 };
+        var json = "{\"classes\": [\"a\",\"b\"]}"u8.ToArray();
+        var pbHash = ToHex(SHA256.HashData(pb));
+        var jsonHash = ToHex(SHA256.HashData(json));
+
+        var manifest = ModelManifest("electronic", "1",
+            ("https://example.invalid/head.pb", pbHash, ""),
+            ("https://example.invalid/metadata.json", jsonHash, "labels.json"));
+
+        var http = TrackedClient(new StubHandler(new Dictionary<string, byte[]>
+        {
+            ["https://example.invalid/head.pb"] = pb,
+            ["https://example.invalid/metadata.json"] = json,
+        }));
+
+        var sut = new NativeToolBootstrapper(manifest, _dataDirs, http, NullLogger<NativeToolBootstrapper>.Instance,
+            runtimeIdentifier: "osx-arm64");
+
+        var dir = await sut.EnsureModelAsync("electronic");
+
+        dir.Should().StartWith(_cacheRoot);
+        Directory.Exists(dir).Should().BeTrue();
+        File.ReadAllBytes(Path.Combine(dir, "head.pb")).Should().BeEquivalentTo(pb);
+        File.ReadAllBytes(Path.Combine(dir, "labels.json")).Should().BeEquivalentTo(json);
+        File.ReadAllText(Path.Combine(dir, ".version")).Trim().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task Model_already_cached_at_matching_version_skips_downloads()
+    {
+        var pb = new byte[] { 7, 7, 7 };
+        var manifest = ModelManifest("electronic", "5",
+            ("https://example.invalid/head.pb", ToHex(SHA256.HashData(pb)), ""));
+
+        var dir = Path.Combine(_cacheRoot, "models", "electronic");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "head.pb"), pb);
+        File.WriteAllText(Path.Combine(dir, ".version"), "5");
+
+        var stub = new StubHandler(new Dictionary<string, byte[]>());   // would 404 if asked
+        var sut = new NativeToolBootstrapper(manifest, _dataDirs, TrackedClient(stub),
+            NullLogger<NativeToolBootstrapper>.Instance,
+            runtimeIdentifier: "osx-arm64");
+
+        var result = await sut.EnsureModelAsync("electronic");
+
+        result.Should().Be(dir);
+        stub.RequestCount.Should().Be(0, "matching .version + all files present must short-circuit any network call");
+    }
+
+    [Fact]
+    public async Task Version_sentinel_mismatch_invalidates_cache_and_re_downloads()
+    {
+        var newPb = new byte[] { 4, 4, 4 };
+        var manifest = ModelManifest("electronic", "2",
+            ("https://example.invalid/head.pb", ToHex(SHA256.HashData(newPb)), ""));
+
+        // Pre-populate with stale content + stale version sentinel.
+        var dir = Path.Combine(_cacheRoot, "models", "electronic");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "head.pb"), [99, 99, 99]);   // stale bytes
+        File.WriteAllText(Path.Combine(dir, ".version"), "1");            // stale version
+
+        var http = TrackedClient(new StubHandler(new Dictionary<string, byte[]>
+        {
+            ["https://example.invalid/head.pb"] = newPb,
+        }));
+
+        var sut = new NativeToolBootstrapper(manifest, _dataDirs, http, NullLogger<NativeToolBootstrapper>.Instance,
+            runtimeIdentifier: "osx-arm64");
+
+        var result = await sut.EnsureModelAsync("electronic");
+
+        File.ReadAllBytes(Path.Combine(result, "head.pb")).Should().BeEquivalentTo(newPb);
+        File.ReadAllText(Path.Combine(result, ".version")).Trim().Should().Be("2");
+    }
+
+    [Fact]
+    public async Task Missing_version_sentinel_invalidates_cache()
+    {
+        var pb = new byte[] { 8, 8, 8 };
+        var manifest = ModelManifest("electronic", "1",
+            ("https://example.invalid/head.pb", ToHex(SHA256.HashData(pb)), ""));
+
+        // Files present but no .version sentinel → cache must re-validate via re-download.
+        var dir = Path.Combine(_cacheRoot, "models", "electronic");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "head.pb"), pb);
+
+        var http = TrackedClient(new StubHandler(new Dictionary<string, byte[]>
+        {
+            ["https://example.invalid/head.pb"] = pb,
+        }));
+        var sut = new NativeToolBootstrapper(manifest, _dataDirs, http, NullLogger<NativeToolBootstrapper>.Instance,
+            runtimeIdentifier: "osx-arm64");
+
+        await sut.EnsureModelAsync("electronic");
+
+        File.Exists(Path.Combine(dir, ".version")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Model_hash_mismatch_aborts_and_leaves_cache_pristine()
+    {
+        var manifest = ModelManifest("electronic", "1",
+            ("https://example.invalid/head.pb", new string('0', 64), ""));   // wrong hash
+
+        var http = TrackedClient(new StubHandler(new Dictionary<string, byte[]>
+        {
+            ["https://example.invalid/head.pb"] = [1, 2, 3],
+        }));
+        var sut = new NativeToolBootstrapper(manifest, _dataDirs, http, NullLogger<NativeToolBootstrapper>.Instance,
+            runtimeIdentifier: "osx-arm64");
+
+        var act = () => sut.EnsureModelAsync("electronic");
+
+        await act.Should().ThrowAsync<NativeToolBootstrapException>()
+            .Where(ex => ex.Message.Contains("SHA-256", StringComparison.OrdinalIgnoreCase));
+
+        sut.TryResolveCachedModel("electronic").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Unknown_model_key_throws_descriptive_error()
+    {
+        var manifest = ModelManifest("electronic", "1",
+            ("https://example.invalid/head.pb", new string('a', 64), ""));
+
+        var sut = new NativeToolBootstrapper(manifest, _dataDirs,
+            TrackedClient(new StubHandler(new Dictionary<string, byte[]>())),
+            NullLogger<NativeToolBootstrapper>.Instance,
+            runtimeIdentifier: "osx-arm64");
+
+        var act = () => sut.EnsureModelAsync("does-not-exist");
+
+        await act.Should().ThrowAsync<NativeToolBootstrapException>()
+            .Where(ex => ex.Message.Contains("not declared", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void KnownModels_lists_all_declared_keys()
+    {
+        var manifest = new NativeToolsManifest
+        {
+            Models =
+            {
+                ["electronic"] = new NativeModelEntry { Version = "1" },
+                ["jamendo"] = new NativeModelEntry { Version = "1" },
+            },
+        };
+        var sut = new NativeToolBootstrapper(manifest, _dataDirs,
+            TrackedClient(new StubHandler(new Dictionary<string, byte[]>())),
+            NullLogger<NativeToolBootstrapper>.Instance,
+            runtimeIdentifier: "osx-arm64");
+
+        sut.KnownModels.Should().BeEquivalentTo(["electronic", "jamendo"]);
+    }
+
+    private static NativeToolsManifest ModelManifest(
+        string modelKey,
+        string version,
+        params (string Url, string Sha256, string RenameTo)[] files)
+    {
+        return new NativeToolsManifest
+        {
+            Models =
+            {
+                [modelKey] = new NativeModelEntry
+                {
+                    Version = version,
+                    Files = [.. files.Select(f => new NativeModelFile
+                    {
+                        Url = f.Url,
+                        Sha256 = f.Sha256,
+                        RenameTo = f.RenameTo,
+                    })],
+                },
+            },
+        };
+    }
+
+    // -- Shared helpers ---------------------------------------------------------------------
+
     private static string ToHex(byte[] hash) => Convert.ToHexStringLower(hash);
 
     private sealed class FakeDataDirs(string root) : IUserDataDirectoryProvider

@@ -123,6 +123,51 @@ analysis:
     timeout_seconds: 30
     min_confidence: 0.0              # fingerprint is binary — present or not
 
+  # Opt-in audio-based genre classification. See docs/PLAN_GENRE_CLASSIFICATION.md.
+  # All flags default to false — leave them off to preserve byte-identical pipeline behaviour.
+  genre_classifier:
+    heuristic:
+      enabled: false                 # tier-3 pure-rule scoring over DSP descriptors
+      min_confidence: 0.55           # below this no candidate is emitted
+    tensorflow:
+      # Each model is independently toggleable AND has its own confidence floor — tune per
+      # model to match how much trust you give it. Defaults differ on purpose; see comments.
+      genre_electronic:
+        enabled: false               # 5-class electronic classifier (ambient/dnb/house/techno/trance)
+        min_confidence: 0.65         # higher floor — overlaps fully with the Phase A heuristic,
+                                     # so we only want strong second-opinion hits
+      mtg_jamendo:
+        enabled: false               # 87-class Jamendo tagger — Rock/Pop/Soul/Jazz/Reggae/...
+        min_confidence: 0.50         # lower floor — wider vocabulary, 0.5 already represents
+                                     # strong confidence across 87 classes
+      discogs_effnet:
+        enabled: false               # 400-class fine-grained Discogs styles — subgenre detection
+        min_confidence: 0.50         # lower floor — only source of subgenres in the pipeline
+        # Aggregation across fine-grained classes (see PLAN §4.0c). When ON, the classifier sums
+        # the top-K probabilities per taxonomy parent genre and emits the winner as an
+        # aggregated candidate (source suffix `:aggregated`) in addition to the raw top-K.
+        # Captures tracks where the 400 classes spread confidence over many subgenres of the
+        # same parent — current top-1 picks would miss this signal.
+        # Default-on for discogs-effnet only; the 5-class genre_electronic and 87-class jamendo
+        # don't benefit because their top-1 already corresponds to a parent-level genre.
+        aggregate_top_k: true
+        # Per-candidate floor for inclusion in the aggregation sum. Long-tail predictions
+        # (p < this value) are filtered out so they can't dilute the parent-genre signal.
+        aggregate_per_candidate_floor: 0.02
+        # A parent genre must aggregate at least this share of the top-K mass to count as a
+        # "clear winner" and emit. Default 0.25 reflects the heuristic "≥1/4 of the considered
+        # probability mass belongs to one parent". Diffuse output (no parent above threshold)
+        # falls through to fallback or drops — see below.
+        aggregate_min_total: 0.25
+        # Behaviour when no parent clears aggregate_min_total: TRUE emits the highest-sum
+        # parent anyway with source suffix `:aggregated-fallback` so the trace shows the
+        # uncertainty (better best-guess than no answer for tagging). FALSE: no aggregated
+        # candidate at all, raw top-K still emits.
+        aggregate_fallback_on_diffuse: true
+      python_executable: ""          # empty = `python3` via PATH
+      script_path: ""                # empty = auto-discover next to tagger
+      models_directory: ""           # empty = <local-app-data>/RayTagger/models/
+
 # --- 4. Online lookup (hybrid: works offline, enriches when online) ---------
 lookup:
   enabled: true

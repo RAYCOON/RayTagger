@@ -27,6 +27,8 @@ public sealed class NativeToolBootstrapper : INativeToolBootstrapper
     private readonly ILogger<NativeToolBootstrapper> _logger;
     private readonly ConcurrentDictionary<string, Lazy<Task<string>>> _inFlight =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<string>>> _modelsInFlight =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly string _rid;
 
     public NativeToolBootstrapper(
@@ -49,6 +51,177 @@ public sealed class NativeToolBootstrapper : INativeToolBootstrapper
     }
 
     public IReadOnlyCollection<string> KnownTools => _manifest.Tools.Keys;
+
+    public IReadOnlyCollection<string> KnownModels => _manifest.Models.Keys;
+
+    public string? TryResolveCachedModel(string modelKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelKey);
+
+        if (!_manifest.Models.TryGetValue(modelKey, out var entry))
+        {
+            return null;
+        }
+
+        var dir = ModelDirectory(modelKey);
+        if (!Directory.Exists(dir))
+        {
+            return null;
+        }
+
+        // Version-sentinel mismatch invalidates the cache.
+        var sentinel = Path.Combine(dir, VersionSentinelFileName);
+        if (!File.Exists(sentinel))
+        {
+            return null;
+        }
+        try
+        {
+            var cachedVersion = File.ReadAllText(sentinel).Trim();
+            if (!string.Equals(cachedVersion, entry.Version, StringComparison.Ordinal))
+            {
+                return null;
+            }
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+
+        // Every declared file must be present (sentinel alone is insufficient — a partial
+        // download might've left the dir half-populated).
+        foreach (var file in entry.Files)
+        {
+            var fileName = ResolveModelFileName(file);
+            if (!File.Exists(Path.Combine(dir, fileName)))
+            {
+                return null;
+            }
+        }
+        return dir;
+    }
+
+    public async Task<string> EnsureModelAsync(string modelKey, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelKey);
+
+        // Same shared-Task pattern as EnsureAsync — concurrent callers for the same model wait
+        // on one Lazy; transient failures evict the slot so retries restart from scratch.
+        var lazy = _modelsInFlight.GetOrAdd(modelKey,
+            key => new Lazy<Task<string>>(
+                () => EnsureModelUncachedAsync(key, CancellationToken.None),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        try
+        {
+            return await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (lazy.Value.IsFaulted)
+        {
+            _modelsInFlight.TryRemove(KeyValuePair.Create(modelKey, lazy));
+            throw;
+        }
+    }
+
+    private async Task<string> EnsureModelUncachedAsync(string modelKey, CancellationToken cancellationToken)
+    {
+        if (!_manifest.Models.TryGetValue(modelKey, out var entry))
+        {
+            throw new NativeToolBootstrapException(
+                $"Model '{modelKey}' is not declared in the native-tools manifest.");
+        }
+
+        var cached = TryResolveCachedModel(modelKey);
+        if (cached is not null)
+        {
+            _logger.LogDebug("Model {Model} already cached at {Path}", modelKey, cached);
+            return cached;
+        }
+
+        var modelDir = ModelDirectory(modelKey);
+        var stageDir = Path.Combine(Path.GetDirectoryName(modelDir)!, $".staging-{modelKey}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stageDir);
+
+        try
+        {
+            // Download every file into the staging dir; verify each by SHA-256 before any move.
+            foreach (var file in entry.Files)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var fileName = ResolveModelFileName(file);
+                var targetPath = Path.Combine(stageDir, fileName);
+                await DownloadFileAsync(file.Url, targetPath, cancellationToken).ConfigureAwait(false);
+                await VerifyHashAsync(targetPath, file.Sha256, cancellationToken).ConfigureAwait(false);
+            }
+
+            // Write the version sentinel — last, so partial-staging cleanup doesn't leave a
+            // false-positive cache hit.
+            await File.WriteAllTextAsync(
+                Path.Combine(stageDir, VersionSentinelFileName),
+                entry.Version,
+                cancellationToken).ConfigureAwait(false);
+
+            // Atomic-ish promote: delete the old dir (if any) and rename staging into place.
+            if (Directory.Exists(modelDir))
+            {
+                Directory.Delete(modelDir, recursive: true);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(modelDir)!);
+            Directory.Move(stageDir, modelDir);
+
+            _logger.LogInformation("Model {Model} bootstrapped to {Path}", modelKey, modelDir);
+            return modelDir;
+        }
+        catch (Exception ex) when (ex is not NativeToolBootstrapException and not OperationCanceledException)
+        {
+            throw new NativeToolBootstrapException(
+                $"Failed to bootstrap model '{modelKey}': {ex.Message}", ex);
+        }
+        finally
+        {
+            TryCleanup(stageDir);
+        }
+    }
+
+    private async Task DownloadFileAsync(string url, string targetPath, CancellationToken ct)
+    {
+        var uri = new Uri(url, UriKind.Absolute);
+        _logger.LogInformation("Downloading {Url}", url);
+
+        using var response = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
+        await using var http = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        await using var file = File.Create(targetPath);
+        await http.CopyToAsync(file, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Models live next to the tools cache, NOT inside it. The existing <see cref="CacheRoot"/>
+    /// resolves to <c>&lt;data-dir&gt;/tools</c> by default (and <c>cache_directory</c> verbatim when
+    /// the manifest overrides it) — going through it would put models at
+    /// <c>&lt;data-dir&gt;/tools/models/...</c> which doesn't match the published cache layout in
+    /// <c>docs/PLAN_GENRE_CLASSIFICATION.md §4.3</c>.
+    /// </summary>
+    private string ModelsRoot =>
+        string.IsNullOrWhiteSpace(_manifest.CacheDirectory)
+            ? Path.Combine(_dataDirs.GetDataDirectory(), "models")
+            : Path.Combine(_manifest.CacheDirectory, "models");
+
+    private string ModelDirectory(string modelKey) => Path.Combine(ModelsRoot, modelKey);
+
+    private static string ResolveModelFileName(NativeModelFile file)
+    {
+        if (!string.IsNullOrWhiteSpace(file.RenameTo))
+        {
+            return file.RenameTo;
+        }
+        var uri = new Uri(file.Url, UriKind.Absolute);
+        var name = Path.GetFileName(uri.LocalPath);
+        return string.IsNullOrWhiteSpace(name) ? "download.bin" : name;
+    }
+
+    private const string VersionSentinelFileName = ".version";
 
     public string? TryResolveCached(string toolName)
     {

@@ -71,6 +71,7 @@ internal static class ScanHandler
             serviceProvider.GetRequiredService<ITagWriterAdapter>(),
             built.AnalysisRunner,
             built.LookupRunner,
+            built.ClassifierRunner,
             serviceProvider.GetRequiredService<IMappingRuleEngine>(),
             serviceProvider.GetRequiredService<ISortService>(),
             serviceProvider.GetRequiredService<TaxonomyGenreResolver>(),

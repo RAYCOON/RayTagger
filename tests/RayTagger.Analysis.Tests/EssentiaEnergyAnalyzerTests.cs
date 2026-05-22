@@ -25,7 +25,12 @@ public class EssentiaEnergyAnalyzerTests
             SpectralFlux: flux,
             OnsetRate: onset,
             Danceability: dance,
-            BeatsLoudness: beatsLoud);
+            BeatsLoudness: beatsLoud,
+            SpectralCentroidMean: null,
+            SpectralComplexityMean: null,
+            DynamicComplexity: null,
+            ChordsChangesRate: null,
+            ChordsStrengthMean: null);
 
     [Fact]
     public void Floor_anchors_for_every_feature_yield_bucket_1()
@@ -111,7 +116,9 @@ public class EssentiaEnergyAnalyzerTests
         var (bucket, conf) = EssentiaEnergyAnalyzer.Compose(new EssentiaResult(
             null, null, null, null, null, null,
             AverageLoudness: 0.9,
-            SpectralFlux: null, OnsetRate: null, Danceability: null, BeatsLoudness: null));
+            SpectralFlux: null, OnsetRate: null, Danceability: null, BeatsLoudness: null,
+            SpectralCentroidMean: null, SpectralComplexityMean: null, DynamicComplexity: null,
+            ChordsChangesRate: null, ChordsStrengthMean: null));
 
         bucket.Should().BeNull();
         conf.Should().Be(0);
@@ -123,7 +130,9 @@ public class EssentiaEnergyAnalyzerTests
         var (bucket, conf) = EssentiaEnergyAnalyzer.Compose(new EssentiaResult(
             null, null, null, null, null, null,
             AverageLoudness: null, SpectralFlux: null,
-            OnsetRate: null, Danceability: null, BeatsLoudness: null));
+            OnsetRate: null, Danceability: null, BeatsLoudness: null,
+            SpectralCentroidMean: null, SpectralComplexityMean: null, DynamicComplexity: null,
+            ChordsChangesRate: null, ChordsStrengthMean: null));
 
         bucket.Should().BeNull();
         conf.Should().Be(0);
@@ -166,7 +175,9 @@ public class EssentiaEnergyAnalyzerTests
             .Returns(new EssentiaResult(
                 null, null, null, null, null, null,
                 AverageLoudness: 0.9, SpectralFlux: null,
-                OnsetRate: null, Danceability: null, BeatsLoudness: null));
+                OnsetRate: null, Danceability: null, BeatsLoudness: null,
+                SpectralCentroidMean: null, SpectralComplexityMean: null, DynamicComplexity: null,
+                ChordsChangesRate: null, ChordsStrengthMean: null));
 
         var analyzer = new EssentiaEnergyAnalyzer(service, NullLogger<EssentiaEnergyAnalyzer>.Instance);
         var result = await analyzer.AnalyzeAsync(FakeFile);

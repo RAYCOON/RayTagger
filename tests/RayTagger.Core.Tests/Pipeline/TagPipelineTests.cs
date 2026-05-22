@@ -21,7 +21,7 @@ public class TagPipelineTests
         reader.Read(file.Path).Returns(existing);
         var writer = Substitute.For<ITagWriterAdapter>();
 
-        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
         var options = MakeOptions(dryRun: true);
 
         var outcomes = await CollectAsync(pipeline.RunAsync(options, new MappingRuleSet()));
@@ -46,7 +46,7 @@ public class TagPipelineTests
         reader.Read(badFile.Path).Returns<TrackTags>(_ => throw new InvalidDataException("corrupt header"));
         var writer = Substitute.For<ITagWriterAdapter>();
 
-        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true), new MappingRuleSet()));
 
@@ -66,7 +66,7 @@ public class TagPipelineTests
         reader.Read(Arg.Any<string>()).Returns(TrackTags.Empty);
         var writer = Substitute.For<ITagWriterAdapter>();
 
-        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -121,7 +121,7 @@ public class TagPipelineTests
         var writer = Substitute.For<ITagWriterAdapter>();
 
         var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance,
-            NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
+            NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
             new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var startedPaths = new List<string>();
@@ -146,7 +146,7 @@ public class TagPipelineTests
         var writer = Substitute.For<ITagWriterAdapter>();
 
         var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance,
-            NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
+            NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
             new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var startedPaths = new System.Collections.Concurrent.ConcurrentBag<string>();
@@ -174,7 +174,7 @@ public class TagPipelineTests
         var writer = Substitute.For<ITagWriterAdapter>();
 
         var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance,
-            NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
+            NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance,
             new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         ValueTask Track(TrackFile f)
@@ -215,7 +215,7 @@ public class TagPipelineTests
         }
 
         var writer = Substitute.For<ITagWriterAdapter>();
-        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
+        var pipeline = new TagPipeline(discovery, reader, writer, NoopAnalysisRunner.Instance, NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(), NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true, parallelism: 4), new MappingRuleSet()));
 
@@ -300,7 +300,7 @@ public class TagPipelineTests
 
         var pipeline = new TagPipeline(
             discovery, reader, writer, runner,
-            NoopLookupRunner.Instance, new MappingRuleEngine(),
+            NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(),
             NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
 
         var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true), new MappingRuleSet()));
@@ -321,5 +321,94 @@ public class TagPipelineTests
                 new EnergyResult(null, 0),
                 new FingerprintResult(null, 0),
                 AcoustIdMbid: null));
+    }
+
+    private sealed class StubClassifierRunner : IGenreClassifierRunner
+    {
+        private readonly GenreClassifierRunResult _result;
+        public StubClassifierRunner(GenreClassifierRunResult result) => _result = result;
+        public Task<GenreClassifierRunResult> RunAsync(TrackFile file, AnalysisResult analysis, CancellationToken cancellationToken = default)
+            => Task.FromResult(_result);
+    }
+
+    private sealed class StubLookupRunner : ILookupRunner
+    {
+        private readonly LookupRunResult _result;
+        public StubLookupRunner(LookupRunResult result) => _result = result;
+        public Task<LookupRunResult> RunAsync(LookupQuery query, CancellationToken cancellationToken = default)
+            => Task.FromResult(_result);
+    }
+
+    [Fact]
+    public async Task Classifier_candidates_are_appended_to_lookup_candidates_in_order()
+    {
+        // Provider produced "House" (top); classifier produced "trance" (0.85). After the stage
+        // the resolver should see [House, trance] — providers retain top spots.
+        var file = MakeTrackFile("merged.mp3");
+        var existing = TrackTags.Empty;
+
+        var discovery = Substitute.For<IFileDiscoveryService>();
+        discovery.EnumerateAsync(Arg.Any<ScanOptions>(), Arg.Any<CancellationToken>())
+            .Returns(AsAsync(file));
+        var reader = Substitute.For<ITagReaderAdapter>();
+        reader.Read(file.Path).Returns(existing);
+        var writer = Substitute.For<ITagWriterAdapter>();
+
+        var providerLookup = new LookupResult([
+            new GenreCandidate("House", 0.9, "musicbrainz"),
+        ], []);
+        var lookupRunner = new StubLookupRunner(new LookupRunResult(providerLookup, []));
+
+        var classifierRunner = new StubClassifierRunner(new GenreClassifierRunResult(
+            [new GenreCandidate("trance", 0.85, "classifier:heuristic")],
+            [new ClassifierTraceEntry("heuristic", ClassifierTraceStatus.Ok, [], null, 12.3)]));
+
+        var pipeline = new TagPipeline(
+            discovery, reader, writer,
+            NoopAnalysisRunner.Instance,
+            lookupRunner,
+            classifierRunner,
+            new MappingRuleEngine(),
+            NoopSortService.Instance,
+            new TaxonomyGenreResolver(),
+            NullLogger<TagPipeline>.Instance);
+
+        var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true), new MappingRuleSet()));
+
+        outcomes.Should().HaveCount(1);
+        // Top-1 raw-merge path (no taxonomy loaded → resolver inactive). Provider still wins.
+        outcomes[0].Resolved.Genre.Value.Should().Be("House");
+        outcomes[0].Resolved.ClassifierTrace.Should().NotBeNull();
+        outcomes[0].Resolved.ClassifierTrace!.Should().ContainSingle()
+            .Which.ClassifierName.Should().Be("heuristic");
+    }
+
+    [Fact]
+    public async Task Noop_classifier_runner_leaves_lookup_unchanged_and_no_trace()
+    {
+        var file = MakeTrackFile("noop.mp3");
+        var existing = TrackTags.Empty;
+
+        var discovery = Substitute.For<IFileDiscoveryService>();
+        discovery.EnumerateAsync(Arg.Any<ScanOptions>(), Arg.Any<CancellationToken>())
+            .Returns(AsAsync(file));
+        var reader = Substitute.For<ITagReaderAdapter>();
+        reader.Read(file.Path).Returns(existing);
+        var writer = Substitute.For<ITagWriterAdapter>();
+
+        var pipeline = new TagPipeline(
+            discovery, reader, writer,
+            NoopAnalysisRunner.Instance,
+            NoopLookupRunner.Instance,
+            NoopGenreClassifierRunner.Instance,
+            new MappingRuleEngine(),
+            NoopSortService.Instance,
+            new TaxonomyGenreResolver(),
+            NullLogger<TagPipeline>.Instance);
+
+        var outcomes = await CollectAsync(pipeline.RunAsync(MakeOptions(dryRun: true), new MappingRuleSet()));
+
+        outcomes.Should().HaveCount(1);
+        outcomes[0].Resolved.ClassifierTrace.Should().BeNull();
     }
 }

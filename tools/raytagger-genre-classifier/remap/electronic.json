@@ -1,0 +1,4 @@
+{
+  "_comment": "Per-model label canonicalisation for the genre_electronic-discogs-effnet model. The model has 5 classes: ambient, dnb, house, techno, trance. Four of those already match the taxonomy directly (case-insensitive whole-word resolver), so only the broken case needs an entry. See docs/PLAN_GENRE_CLASSIFICATION.md §4.0a.",
+  "dnb": "Drum and Bass"
+}

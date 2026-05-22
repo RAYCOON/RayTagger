@@ -59,8 +59,11 @@ public static class ServiceCollectionComposer
         services.AddSingleton<ISortService, SortService>();
         services.AddSingleton<IUserDataDirectoryProvider, UserDataDirectoryProvider>();
 
-        // Native-tool infrastructure.
+        // Native-tool infrastructure. INativeProcessRunner forwards to the same concrete
+        // instance — interface registration only exists for unit-testability of the TF genre
+        // classifier (legacy analyzers depend on the concrete type and need no changes).
         services.AddSingleton<NativeProcessRunner>();
+        services.AddSingleton<INativeProcessRunner>(sp => sp.GetRequiredService<NativeProcessRunner>());
         services.AddSingleton<IAnalysisToolProbe, AnalysisToolProbe>();
 
         // User-Agent infrastructure. The state singleton is mutated once per scan from the
@@ -84,6 +87,11 @@ public static class ServiceCollectionComposer
 
         // Shared pipeline factory — both the CLI's ScanHandler and the UI's ScanCoordinator
         // resolve and reuse this. Registering it here keeps the wiring symmetric.
+        //
+        // Note: IGenreClassifierRunner is intentionally NOT registered. PipelineFactory.BuildAsync
+        // constructs it per-scan and hands it back via PipelineBuildResult.ClassifierRunner — the
+        // same pattern as AnalysisRunner / LookupRunner. The DI container has no useful default
+        // because the runner's classifier list depends on per-scan TaggerOptions.
         services.AddSingleton<PipelineFactory>();
 
         return services;

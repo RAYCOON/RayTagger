@@ -99,6 +99,162 @@ public class TaggerOptionsLoaderTests
     }
 
     [Fact]
+    public void Genre_classifier_section_round_trips()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              genre_classifier:
+                heuristic:
+                  enabled: true
+                  min_confidence: 0.62
+                tensorflow:
+                  genre_electronic:
+                    enabled: true
+                    min_confidence: 0.65
+                  mtg_jamendo:
+                    enabled: false
+                    min_confidence: 0.50
+                  discogs_effnet:
+                    enabled: true
+                    min_confidence: 0.55
+                  python_executable: "/opt/python3"
+                  script_path: "/opt/raytagger/genre_classifier.py"
+                  models_directory: "/var/models"
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        var gc = options.Analysis.GenreClassifier;
+        gc.Heuristic.Enabled.Should().BeTrue();
+        gc.Heuristic.MinConfidence.Should().BeApproximately(0.62, 0.001);
+        gc.Tensorflow.GenreElectronic.Enabled.Should().BeTrue();
+        gc.Tensorflow.GenreElectronic.MinConfidence.Should().BeApproximately(0.65, 0.001);
+        gc.Tensorflow.MtgJamendo.Enabled.Should().BeFalse();
+        gc.Tensorflow.DiscogsEffnet.Enabled.Should().BeTrue();
+        gc.Tensorflow.PythonExecutable.Should().Be("/opt/python3");
+        gc.Tensorflow.ScriptPath.Should().Be("/opt/raytagger/genre_classifier.py");
+        gc.Tensorflow.ModelsDirectory.Should().Be("/var/models");
+    }
+
+    [Fact]
+    public void Genre_classifier_section_defaults_when_missing()
+    {
+        // No analysis.genre_classifier block at all → default-constructed POCOs, all flags off.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        var gc = options.Analysis.GenreClassifier;
+        gc.Heuristic.Enabled.Should().BeFalse();
+        gc.Heuristic.MinConfidence.Should().BeApproximately(0.55, 0.001);
+        gc.Tensorflow.GenreElectronic.Enabled.Should().BeFalse();
+        gc.Tensorflow.MtgJamendo.Enabled.Should().BeFalse();
+        gc.Tensorflow.DiscogsEffnet.Enabled.Should().BeFalse();
+
+        // Asymmetric defaults — see B3 in docs/PLAN_GENRE_CLASSIFICATION.md.
+        // genre_electronic floor is raised because it overlaps with the Phase A heuristic;
+        // mtg_jamendo and discogs_effnet stay lower because they cover unique territory.
+        gc.Tensorflow.GenreElectronic.MinConfidence.Should().BeApproximately(0.65, 0.001);
+        gc.Tensorflow.MtgJamendo.MinConfidence.Should().BeApproximately(0.50, 0.001);
+        gc.Tensorflow.DiscogsEffnet.MinConfidence.Should().BeApproximately(0.50, 0.001);
+    }
+
+    [Fact]
+    public void Each_tensorflow_model_has_independently_configurable_min_confidence()
+    {
+        // Behavioural test: the user can set a different min_confidence per model and the
+        // loader plumbs them through cleanly. Catches accidental shared-state regressions
+        // (e.g. if someone refactors TensorflowModelOptions into a singleton).
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              genre_classifier:
+                tensorflow:
+                  genre_electronic:
+                    enabled: true
+                    min_confidence: 0.80
+                  mtg_jamendo:
+                    enabled: true
+                    min_confidence: 0.35
+                  discogs_effnet:
+                    enabled: true
+                    min_confidence: 0.42
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+        var gc = options.Analysis.GenreClassifier;
+
+        gc.Tensorflow.GenreElectronic.MinConfidence.Should().BeApproximately(0.80, 0.001);
+        gc.Tensorflow.MtgJamendo.MinConfidence.Should().BeApproximately(0.35, 0.001);
+        gc.Tensorflow.DiscogsEffnet.MinConfidence.Should().BeApproximately(0.42, 0.001);
+    }
+
+    [Fact]
+    public void Tensorflow_genre_electronic_default_min_confidence_is_higher_than_other_models()
+    {
+        // Design-documentation test. If a future refactor unifies the defaults, this test
+        // fires and forces the change to go through review with the original rationale in
+        // mind: genre_electronic overlaps with the Phase A heuristic, so its floor is raised
+        // to act as a sanity-check / second opinion. See docs/PLAN_GENRE_CLASSIFICATION.md §4.0.
+        var defaults = new TensorflowClassifierOptions();
+
+        defaults.GenreElectronic.MinConfidence
+            .Should().BeGreaterThan(defaults.MtgJamendo.MinConfidence,
+                because: "genre_electronic overlaps with the Phase A heuristic — its floor is raised on purpose");
+        defaults.GenreElectronic.MinConfidence
+            .Should().BeGreaterThan(defaults.DiscogsEffnet.MinConfidence,
+                because: "genre_electronic offers no unique coverage vs. heuristic, unlike discogs_effnet's subgenres");
+    }
+
+    [Fact]
+    public void Heuristic_classifier_min_confidence_outside_zero_to_one_is_reported()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              genre_classifier:
+                heuristic:
+                  min_confidence: 1.5
+            """;
+
+        var act = () => TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        var ex = act.Should().Throw<ConfigurationException>().Which;
+        ex.Errors.Should().Contain(e => e.YamlPath == "analysis.genre_classifier.heuristic.min_confidence");
+    }
+
+    [Fact]
+    public void Tensorflow_genre_electronic_min_confidence_outside_zero_to_one_is_reported()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              genre_classifier:
+                tensorflow:
+                  genre_electronic:
+                    min_confidence: -0.1
+            """;
+
+        var act = () => TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        var ex = act.Should().Throw<ConfigurationException>().Which;
+        ex.Errors.Should().Contain(e => e.YamlPath == "analysis.genre_classifier.tensorflow.genre_electronic.min_confidence");
+    }
+
+    [Fact]
     public void Relative_source_path_resolves_against_config_directory()
     {
         const string yaml = """

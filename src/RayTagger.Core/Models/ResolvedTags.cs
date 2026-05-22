@@ -83,6 +83,14 @@ public sealed record ResolvedTrackTags(
     /// </summary>
     public IReadOnlyList<ProviderTraceEntry>? ProviderTrace { get; init; }
 
+    /// <summary>
+    /// Optional per-classifier trace from the audio-based genre classification stage. One entry
+    /// per enabled classifier (Ok / NoHit / Disabled / Failed). Null when no classifier is
+    /// configured (the no-op runner is in place) or when the stage was skipped entirely.
+    /// Diagnostic-only — the merger never reads this.
+    /// </summary>
+    public IReadOnlyList<Pipeline.ClassifierTraceEntry>? ClassifierTrace { get; init; }
+
     public static ResolvedTrackTags Empty { get; } = new(
         ResolvedField.Empty<string>(),
         ResolvedField.Empty<string>(),

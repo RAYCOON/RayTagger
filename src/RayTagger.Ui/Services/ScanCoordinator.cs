@@ -153,6 +153,7 @@ public sealed class ScanCoordinator
             _writer,
             built.AnalysisRunner,
             built.LookupRunner,
+            built.ClassifierRunner,
             _ruleEngine,
             _sortService,
             _genreResolver,

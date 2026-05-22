@@ -13,6 +13,10 @@ namespace RayTagger.Analysis;
 /// is retained for diagnostic logging — it is no longer the primary energy signal because raw
 /// spectral RMS does not differentiate well across a DJ library (replay-gain dependent, rhythm
 /// blind). See the analyzer for the rationale.
+/// The trailing five descriptors (<see cref="SpectralCentroidMean"/>,
+/// <see cref="SpectralComplexityMean"/>, <see cref="DynamicComplexity"/>,
+/// <see cref="ChordsChangesRate"/>, <see cref="ChordsStrengthMean"/>) feed the heuristic
+/// genre classifier — see <c>docs/PLAN_GENRE_CLASSIFICATION.md §3.5</c>.
 /// </remarks>
 public sealed record EssentiaResult(
     double? Bpm,
@@ -25,4 +29,9 @@ public sealed record EssentiaResult(
     double? SpectralFlux,
     double? OnsetRate,
     double? Danceability,
-    double? BeatsLoudness);
+    double? BeatsLoudness,
+    double? SpectralCentroidMean,
+    double? SpectralComplexityMean,
+    double? DynamicComplexity,
+    double? ChordsChangesRate,
+    double? ChordsStrengthMean);

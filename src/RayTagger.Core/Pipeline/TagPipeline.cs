@@ -28,6 +28,7 @@ public sealed class TagPipeline : ITagPipeline
     private readonly ITagWriterAdapter _writer;
     private readonly IAnalysisRunner _analysisRunner;
     private readonly ILookupRunner _lookupRunner;
+    private readonly IGenreClassifierRunner _classifierRunner;
     private readonly IMappingRuleEngine _ruleEngine;
     private readonly ISortService _sortService;
     private readonly Mapping.TaxonomyGenreResolver _genreResolver;
@@ -39,6 +40,7 @@ public sealed class TagPipeline : ITagPipeline
         ITagWriterAdapter writer,
         IAnalysisRunner analysisRunner,
         ILookupRunner lookupRunner,
+        IGenreClassifierRunner classifierRunner,
         IMappingRuleEngine ruleEngine,
         ISortService sortService,
         Mapping.TaxonomyGenreResolver genreResolver,
@@ -49,6 +51,7 @@ public sealed class TagPipeline : ITagPipeline
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(analysisRunner);
         ArgumentNullException.ThrowIfNull(lookupRunner);
+        ArgumentNullException.ThrowIfNull(classifierRunner);
         ArgumentNullException.ThrowIfNull(ruleEngine);
         ArgumentNullException.ThrowIfNull(sortService);
         ArgumentNullException.ThrowIfNull(genreResolver);
@@ -59,6 +62,7 @@ public sealed class TagPipeline : ITagPipeline
         _writer = writer;
         _analysisRunner = analysisRunner;
         _lookupRunner = lookupRunner;
+        _classifierRunner = classifierRunner;
         _ruleEngine = ruleEngine;
         _sortService = sortService;
         _genreResolver = genreResolver;
@@ -242,6 +246,38 @@ public sealed class TagPipeline : ITagPipeline
             // Fail open — pipeline continues with whatever analysis produced.
         }
 
+        // Audio-based genre classification stage. Appends classifier candidates to the lookup
+        // result so the taxonomy resolver applies the same whole-word + longest-match logic to
+        // classifier hits as it does to API hits. Providers retain top spots in the candidate
+        // list — classifiers only "rescue" the resolver when providers produced nothing
+        // taxonomy-shaped. See docs/PLAN_GENRE_CLASSIFICATION.md §5.1.
+        IReadOnlyList<ClassifierTraceEntry>? classifierTrace = null;
+        try
+        {
+            var classifierRun = await _classifierRunner
+                .RunAsync(file, analysis, cancellationToken)
+                .ConfigureAwait(false);
+            // Only surface a trace when at least one classifier actually ran. The Noop runner
+            // returns an empty list — distinguishing "stage skipped" from "stage ran with no
+            // hits" keeps the UI diagnostic surface honest.
+            if (classifierRun.Trace.Count > 0)
+            {
+                classifierTrace = classifierRun.Trace;
+            }
+            if (classifierRun.Candidates.Count > 0)
+            {
+                var existingGenres = lookup?.GenreCandidates ?? [];
+                var merged = existingGenres.Concat(classifierRun.Candidates).ToList();
+                lookup = (lookup ?? LookupResult.Empty) with { GenreCandidates = merged };
+            }
+        }
+        catch (Exception ex) when (ShouldIsolate(ex))
+        {
+            _logger.LogWarning(ex, "Classifier stage failed for {Path}: {Message}", file.Path, ex.Message);
+            errors.Add(new StageError("Classify", ex.Message));
+            // Fail open — the merger still has the (unmodified) lookup result to consume.
+        }
+
         // Pass the taxonomy + resolver only when the flag is on AND a taxonomy is loaded;
         // otherwise TagMerger falls back to the legacy "top-1 stur" Lookup-Merge.
         var resolverActive = options.Lookup.TaxonomyResolution && options.Taxonomy.Loaded.Genres.Count > 0;
@@ -254,6 +290,10 @@ public sealed class TagPipeline : ITagPipeline
             resolverActive ? options.Taxonomy.Loaded : null,
             resolverActive ? _genreResolver : null,
             providerTrace);
+        if (classifierTrace is not null)
+        {
+            resolved = resolved with { ClassifierTrace = classifierTrace };
+        }
         // Snapshot the pre-map state so the UI's live-preview can re-evaluate the rule chain
         // against a freshly-edited mappings.yaml without paying for a re-read / re-analyze.
         var preMapResolved = resolved;

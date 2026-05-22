@@ -5,6 +5,22 @@ using Microsoft.Extensions.Logging;
 namespace RayTagger.Analysis.Internal;
 
 /// <summary>
+/// Abstraction over native-process invocation. The concrete
+/// <see cref="NativeProcessRunner"/> implements this against <see cref="Process"/>; tests
+/// can substitute a stub returning canned <see cref="ProcessResult"/> values without
+/// spawning real subprocesses. Introduced for the TensorFlow genre classifier's unit
+/// tests — existing analyzers still depend on the concrete type and need no changes.
+/// </summary>
+public interface INativeProcessRunner
+{
+    Task<ProcessResult> RunAsync(
+        string executable,
+        IReadOnlyList<string> arguments,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Thin wrapper around <see cref="Process"/> that:
 /// <list type="bullet">
 ///   <item>Uses <see cref="ProcessStartInfo.ArgumentList"/> so paths with spaces / quotes / shell
@@ -15,7 +31,7 @@ namespace RayTagger.Analysis.Internal;
 /// </list>
 /// Shared by every CLI-based analyzer in <c>RayTagger.Analysis</c>.
 /// </summary>
-public sealed class NativeProcessRunner
+public sealed class NativeProcessRunner : INativeProcessRunner
 {
     private readonly ILogger<NativeProcessRunner> _logger;
 

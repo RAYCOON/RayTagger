@@ -36,6 +36,15 @@ public sealed class NativeToolResolver
     }
 
     /// <summary>
+    /// Direct access to the underlying bootstrapper for callers that need to fetch artifacts
+    /// other than analysis binaries (e.g. TF model files via
+    /// <see cref="INativeToolBootstrapper.EnsureModelAsync"/>). <c>null</c> when no
+    /// <c>native-tools.yaml</c> manifest was found — the caller should treat that as
+    /// "auto-bootstrap unavailable" and report the dependency as missing.
+    /// </summary>
+    public INativeToolBootstrapper? Bootstrapper => _bootstrapper;
+
+    /// <summary>
     /// Returns the path Tagger should pass to <c>Process.Start</c>: either the bare binary name
     /// (when PATH works) or an absolute path (when the bootstrapper produced one). <c>null</c>
     /// means the tool is unavailable for this scan.

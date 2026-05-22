@@ -17,7 +17,7 @@ public class EssentiaKeyAnalyzerTests
     {
         var service = Substitute.For<IEssentiaAnalysisService>();
         service.RunAsync(Arg.Any<TrackFile>(), Arg.Any<CancellationToken>())
-            .Returns(new EssentiaResult(null, null, essentiaKey, essentiaScale, KeyStrength: 0.7, null, null, null, null, null, null));
+            .Returns(new EssentiaResult(null, null, essentiaKey, essentiaScale, KeyStrength: 0.7, null, null, null, null, null, null, null, null, null, null, null));
 
         var analyzer = new EssentiaKeyAnalyzer(service, NullLogger<EssentiaKeyAnalyzer>.Instance);
         var result = await analyzer.AnalyzeAsync(FakeFile);
@@ -33,7 +33,7 @@ public class EssentiaKeyAnalyzerTests
     {
         var service = Substitute.For<IEssentiaAnalysisService>();
         service.RunAsync(Arg.Any<TrackFile>(), Arg.Any<CancellationToken>())
-            .Returns(new EssentiaResult(null, null, null, "minor", 0.5, null, null, null, null, null, null));
+            .Returns(new EssentiaResult(null, null, null, "minor", 0.5, null, null, null, null, null, null, null, null, null, null, null));
 
         var analyzer = new EssentiaKeyAnalyzer(service, NullLogger<EssentiaKeyAnalyzer>.Instance);
         var result = await analyzer.AnalyzeAsync(FakeFile);
@@ -47,7 +47,7 @@ public class EssentiaKeyAnalyzerTests
         // Defensive: a malformed key (e.g. "??") shouldn't pin a half-built MusicalKey downstream.
         var service = Substitute.For<IEssentiaAnalysisService>();
         service.RunAsync(Arg.Any<TrackFile>(), Arg.Any<CancellationToken>())
-            .Returns(new EssentiaResult(null, null, "??", "minor", 0.5, null, null, null, null, null, null));
+            .Returns(new EssentiaResult(null, null, "??", "minor", 0.5, null, null, null, null, null, null, null, null, null, null, null));
 
         var analyzer = new EssentiaKeyAnalyzer(service, NullLogger<EssentiaKeyAnalyzer>.Instance);
         var result = await analyzer.AnalyzeAsync(FakeFile);

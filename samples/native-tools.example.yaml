@@ -130,3 +130,57 @@ tools:
       # first-class scenario since Windows 11), but Tagger won't auto-bootstrap
       # that fallback. Add an explicit entry pointing at the win-x64 archive
       # if you want that behaviour.
+
+# --- TensorFlow genre-classifier models (Phase B) ---------------------------
+# These are optional — only downloaded when the matching flag in tagger.yaml
+# under `analysis.genre_classifier.tensorflow.*.enabled` is true. Each model
+# entry is platform-independent (.pb files run wherever TensorFlow does), so
+# `sources:` is a flat list of files rather than a per-RID map.
+#
+# The cache layout is flat: <cacheRoot>/models/<model-key>/<files>. The Python
+# bridge expects every file at that exact location, so when adding a new model
+# entry make sure `rename_to:` (if used) produces the filename the script
+# looks up — see tools/raytagger-genre-classifier/raytagger_genre_classifier.py.
+#
+# `version:` is a cache-bust marker — bumping it forces re-download on the
+# next scan. SHA-256s are pinned from real downloads on 2026-05-22.
+models:
+
+  # 5-class electronic classifier. Two .pb files (embedding + head) + metadata
+  # JSON renamed to labels.json. Used by `tensorflow.genre_electronic.enabled`.
+  electronic:
+    version: "1"
+    files:
+      - url: "https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb"
+        sha256: "3ed9af50d5367c0b9c795b294b00e7599e4943244f4cbd376869f3bfc87721b1"
+      - url: "https://essentia.upf.edu/models/classification-heads/genre_electronic/genre_electronic-discogs-effnet-1.pb"
+        sha256: "a479f5b4db4fee5f4e76838cd62200754e20494975bb541184fc5d696d2763ef"
+      - url: "https://essentia.upf.edu/models/classification-heads/genre_electronic/genre_electronic-discogs-effnet-1.json"
+        sha256: "11dcd6e511a46bc19b3c0a7a3860b0535bad4c30798bde4421e815c519d75602"
+        rename_to: "labels.json"
+
+  # 87-class MTG Jamendo tagger. Shares the discogs-effnet embedding with the
+  # `electronic` and `discogs-effnet` models — yes, that means we redundantly
+  # download the 18 MB embedding file three times. Acceptable for v1; dedup is
+  # a future optimisation if disk pressure ever shows up.
+  jamendo:
+    version: "1"
+    files:
+      - url: "https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb"
+        sha256: "3ed9af50d5367c0b9c795b294b00e7599e4943244f4cbd376869f3bfc87721b1"
+      - url: "https://essentia.upf.edu/models/classification-heads/mtg_jamendo_genre/mtg_jamendo_genre-discogs-effnet-1.pb"
+        sha256: "a46f94fd85b03b403d6498a820e3ee652e05a24fc2a344d84545ac36224e698e"
+      - url: "https://essentia.upf.edu/models/classification-heads/mtg_jamendo_genre/mtg_jamendo_genre-discogs-effnet-1.json"
+        sha256: "b0ae89110ddbdba5ed3ad375910b1cffc738436fbb4138ac4c2801b48fc5ec59"
+        rename_to: "labels.json"
+
+  # 400-class discogs-effnet style classifier — single-stage, the same .pb is
+  # the classifier (not an embedding). Plus its own metadata JSON.
+  discogs-effnet:
+    version: "1"
+    files:
+      - url: "https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb"
+        sha256: "3ed9af50d5367c0b9c795b294b00e7599e4943244f4cbd376869f3bfc87721b1"
+      - url: "https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.json"
+        sha256: "a35003202384735c33154e20264267f9941705218a7b93202b655a1d408d4ff6"
+        rename_to: "labels.json"

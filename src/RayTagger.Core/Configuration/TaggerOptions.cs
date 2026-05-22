@@ -117,6 +117,136 @@ public sealed class AnalysisOptions
     public KeyAnalyzerOptions Key { get; set; } = new() { Provider = "essentia", MinConfidence = 0.55 };
     public EnergyAnalyzerOptions Energy { get; set; } = new() { Provider = "essentia", MinConfidence = 0.5 };
     public AnalyzerOptions Fingerprint { get; set; } = new() { Provider = "chromaprint", MinConfidence = 0.0 };
+    public GenreClassifierOptions GenreClassifier { get; set; } = new();
+}
+
+/// <summary>
+/// Opt-in audio-based genre classification. See <c>docs/PLAN_GENRE_CLASSIFICATION.md</c>.
+/// Everything default-off — switching all flags off yields byte-identical pipeline behaviour
+/// (the DI container plugs in a <c>NoopGenreClassifierRunner</c>).
+/// </summary>
+public sealed class GenreClassifierOptions
+{
+    public HeuristicClassifierOptions Heuristic { get; set; } = new();
+    public TensorflowClassifierOptions Tensorflow { get; set; } = new();
+}
+
+/// <summary>
+/// Tier-3 heuristic classifier — pure-rule scoring over DSP descriptors from the existing
+/// Essentia run. Zero new dependencies. Scoring table in
+/// <c>docs/PLAN_GENRE_CLASSIFICATION.md §3.5</c>.
+/// </summary>
+public sealed class HeuristicClassifierOptions
+{
+    /// <summary>
+    /// Off by default — turn on to add House/Techno/Trance/Drum and Bass/Dubstep/Hip Hop/
+    /// Ambient/Downtempo candidates to the resolver's input.
+    /// </summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Below this score the classifier emits no candidate for that genre. [0,1].</summary>
+    public double MinConfidence { get; set; } = 0.55;
+}
+
+/// <summary>
+/// Tier-1 TensorFlow classifiers. Each model is an independent switch with its own confidence
+/// floor; the user installs <c>essentia-tensorflow</c> via <c>pip</c> and Tagger spawns the
+/// Python bridge script. See <c>docs/PLAN_GENRE_CLASSIFICATION.md §4</c>.
+/// </summary>
+/// <remarks>
+/// Per-model <see cref="TensorflowModelOptions.MinConfidence"/> is independently overridable
+/// in <c>tagger.yaml</c>. The asymmetric defaults below (0.65 vs 0.50) reflect the role each
+/// model plays — <see cref="GenreElectronic"/> overlaps with the Phase A heuristic so we set
+/// a higher floor; <see cref="MtgJamendo"/> and <see cref="DiscogsEffnet"/> cover material the
+/// heuristic deliberately skips (Rock/Pop/Soul/Jazz; fine-grained subgenres) and benefit from
+/// a lower floor that captures genuine signal across larger label vocabularies.
+/// </remarks>
+public sealed class TensorflowClassifierOptions
+{
+    /// <summary>
+    /// Default <c>min_confidence: 0.65</c> — higher than the other two models because
+    /// <see cref="HeuristicClassifierOptions"/> already covers the same 5 classes
+    /// (ambient/dnb/house/techno/trance). The raised floor turns this model into a
+    /// "second opinion" that only fires when it disagrees with the heuristic from a
+    /// position of genuine confidence.
+    /// </summary>
+    public TensorflowModelOptions GenreElectronic { get; set; } = new() { MinConfidence = 0.65 };
+
+    /// <summary>
+    /// Default <c>min_confidence: 0.50</c> — the 87-class Jamendo tagger has unique coverage
+    /// of Rock/Pop/R&amp;B/Soul/Jazz/Funk/Reggae/Classical that the heuristic doesn't try to
+    /// handle. Lower floor captures genuine signal; with 87 classes a 0.50 probability
+    /// already represents strong confidence.
+    /// </summary>
+    public TensorflowModelOptions MtgJamendo { get; set; } = new();
+
+    /// <summary>
+    /// Default <c>min_confidence: 0.50</c> and <c>aggregate_top_k: true</c> — the 400-class
+    /// discogs-effnet model is the only source of subgenre detection in the pipeline AND its
+    /// fine granularity benefits the most from parent-genre aggregation (see §4.0c). With
+    /// aggregation on, raw subgenre detection is suppressed in favour of a robust parent-genre
+    /// vote; set <c>aggregate_top_k: false</c> to recover the raw top-1 behaviour.
+    /// </summary>
+    public TensorflowModelOptions DiscogsEffnet { get; set; } = new() { AggregateTopK = true };
+
+    /// <summary>Empty = look up <c>python3</c> on PATH.</summary>
+    public string PythonExecutable { get; set; } = string.Empty;
+
+    /// <summary>Empty = auto-discover next to the Tagger executable.</summary>
+    public string ScriptPath { get; set; } = string.Empty;
+
+    /// <summary>Empty = <c>&lt;local-app-data&gt;/RayTagger/models/</c>.</summary>
+    public string ModelsDirectory { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Per-TF-model knob. Each model has independent <see cref="Enabled"/> and
+/// <see cref="MinConfidence"/> — both are overridable in <c>tagger.yaml</c>. The default
+/// constructor sets the universal defaults; <see cref="TensorflowClassifierOptions"/> overrides
+/// these in per-model initialisers when the role demands a different baseline.
+/// </summary>
+/// <remarks>
+/// The aggregation knobs (<see cref="AggregateTopK"/> and friends) implement the parent-genre
+/// summation described in <c>docs/PLAN_GENRE_CLASSIFICATION.md §4.0c</c>. Default-off here so a
+/// freshly-constructed instance behaves like before B6.5; <see cref="TensorflowClassifierOptions"/>
+/// flips it on only for <c>DiscogsEffnet</c> where the 400-class output benefits most.
+/// </remarks>
+public sealed class TensorflowModelOptions
+{
+    public bool Enabled { get; set; }
+    public double MinConfidence { get; set; } = 0.5;
+
+    /// <summary>
+    /// When true, the classifier sums the top-K predictions' probabilities by their resolved
+    /// taxonomy parent genre and emits aggregated candidate(s) in addition to the raw top-K.
+    /// Captures the "model distributes confidence across many subgenres of the same parent"
+    /// case (see §4.0c). Default off; only the 400-class discogs-effnet enables this by default.
+    /// </summary>
+    public bool AggregateTopK { get; set; }
+
+    /// <summary>
+    /// Per-candidate probability floor for inclusion in the aggregation sum. Long-tail
+    /// predictions (e.g. p &lt; 0.02 in a top-10 output) contribute almost no information but
+    /// can dilute the parent-genre signal in aggregate. [0, 1].
+    /// </summary>
+    public double AggregatePerCandidateFloor { get; set; } = 0.02;
+
+    /// <summary>
+    /// Minimum aggregated sum for a parent genre to count as a "clear winner" and be emitted
+    /// as a standalone aggregated candidate. When NO parent genre clears this threshold the
+    /// model's output is considered diffuse — see <see cref="AggregateFallbackOnDiffuse"/> for
+    /// what happens next. [0, 1].
+    /// </summary>
+    public double AggregateMinTotal { get; set; } = 0.25;
+
+    /// <summary>
+    /// When true and the aggregation produced no parent above <see cref="AggregateMinTotal"/>,
+    /// the parent with the highest sum is still emitted — tagged with the <c>:aggregated-fallback</c>
+    /// source suffix so the trace makes the uncertainty visible. When false, diffuse output
+    /// produces no aggregated candidate at all (raw top-K still emit). Default true: a
+    /// reasonable best-guess beats no answer for DJ-library tagging.
+    /// </summary>
+    public bool AggregateFallbackOnDiffuse { get; set; } = true;
 }
 
 public class AnalyzerOptions

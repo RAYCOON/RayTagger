@@ -26,4 +26,25 @@ public interface INativeToolBootstrapper
 
     /// <summary>The set of tool names declared in the manifest (used by <c>tagger setup</c>).</summary>
     IReadOnlyCollection<string> KnownTools { get; }
+
+    /// <summary>
+    /// Returns the absolute path of the directory that contains all files for the TF model
+    /// <paramref name="modelKey"/>, downloading missing files on first use. The directory layout
+    /// matches what the Python bridge expects: every file sits flat under
+    /// <c>&lt;cacheRoot&gt;/models/&lt;modelKey&gt;/</c>. A <c>.version</c> sentinel file is written so a
+    /// later manifest version bump triggers re-download.
+    /// </summary>
+    /// <exception cref="NativeToolBootstrapException">
+    /// Thrown when the model isn't in the manifest, a download fails, or a SHA-256 doesn't match.
+    /// </exception>
+    Task<string> EnsureModelAsync(string modelKey, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the cached model directory if every declared file exists AND the <c>.version</c>
+    /// sentinel matches the manifest version. Otherwise <c>null</c> — no network I/O.
+    /// </summary>
+    string? TryResolveCachedModel(string modelKey);
+
+    /// <summary>The set of TF model keys declared in the manifest.</summary>
+    IReadOnlyCollection<string> KnownModels { get; }
 }
