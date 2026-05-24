@@ -21,6 +21,15 @@ public sealed class TaggerOptions
     public LoggingOptions Logging { get; set; } = new();
     public NativeToolsOptions NativeTools { get; set; } = new();
     public TaxonomyOptions Taxonomy { get; set; } = new();
+
+    /// <summary>
+    /// Runtime-only diagnostic messages collected by <c>TaggerOptionsLoader</c> — currently used
+    /// for deprecation warnings (e.g. the legacy <c>read.existing_tags_policy</c> key, removed
+    /// in favour of per-dimension <c>existing_confidence</c>). CLI handlers surface these to the
+    /// user; the field is not serialized to/from YAML.
+    /// </summary>
+    [YamlDotNet.Serialization.YamlIgnore]
+    public List<string> Deprecations { get; set; } = [];
 }
 
 /// <summary>
@@ -85,30 +94,15 @@ public sealed class ScanOptions
     public int EffectiveParallelism => Parallelism > 0 ? Parallelism : Environment.ProcessorCount;
 }
 
-public enum ExistingTagsPolicy
-{
-    /// <summary>
-    /// Default. Per field: if an existing value is set, Analysis/Lookup do NOT overwrite it.
-    /// Rules-sourced values always write regardless of policy (the user's explicit declarative
-    /// intent should never be silently dropped). See <see cref="FillOnlyEmpty"/> for the alias
-    /// and ARCHITECTURE.md §6.2 for the full matrix.
-    /// </summary>
-    SkipIfPresent,
-
-    /// <summary>
-    /// Alias of <see cref="SkipIfPresent"/>. Kept as a separate enum value because the example
-    /// YAML and earlier docs reference both names; merger behaviour is identical. Pick whichever
-    /// reads better in the user's <c>tagger.yaml</c>.
-    /// </summary>
-    FillOnlyEmpty,
-
-    /// <summary>Overwrite anything, including non-empty existing values.</summary>
-    AlwaysOverwrite,
-}
-
+/// <summary>
+/// Placeholder for the <c>read:</c> block in tagger.yaml. Currently empty — the historical
+/// <c>existing_tags_policy</c> knob has been replaced by per-dimension
+/// <see cref="AnalyzerOptions.ExistingConfidence"/> and <see cref="LookupOptions.ExistingConfidence"/>.
+/// Kept as a class (rather than removing the <c>read:</c> mapping entirely) so future
+/// read-stage knobs have a place to land without another YAML schema break.
+/// </summary>
 public sealed class ReadOptions
 {
-    public ExistingTagsPolicy ExistingTagsPolicy { get; set; } = ExistingTagsPolicy.SkipIfPresent;
 }
 
 public sealed class AnalysisOptions
@@ -139,13 +133,45 @@ public sealed class GenreClassifierOptions
 public sealed class HeuristicClassifierOptions
 {
     /// <summary>
-    /// Off by default — turn on to add House/Techno/Trance/Drum and Bass/Dubstep/Hip Hop/
-    /// Ambient/Downtempo candidates to the resolver's input.
+    /// On by default — adds House/Techno/Trance/Drum and Bass/Dubstep/Hip Hop/Ambient/Downtempo
+    /// candidates to the resolver's input. Uses only DSP descriptors from the existing Essentia
+    /// run (no extra subprocess), so the cost is negligible. Set to <c>false</c> to disable.
     /// </summary>
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
 
     /// <summary>Below this score the classifier emits no candidate for that genre. [0,1].</summary>
     public double MinConfidence { get; set; } = 0.55;
+
+    /// <summary>
+    /// How to combine the 7 per-feature scores (BPM, KeyScale, Chords, Centroid, Dynamics,
+    /// Danceability, BeatsLoudness) into a single composite confidence.
+    /// </summary>
+    public HeuristicScoringMode ScoringMode { get; set; } = HeuristicScoringMode.ArithmeticMean;
+}
+
+/// <summary>
+/// Aggregation strategy for the heuristic classifier's per-feature scores. Implemented in
+/// <c>HeuristicGenreClassifier.ScoreGenre</c> (RayTagger.Analysis).
+/// </summary>
+public enum HeuristicScoringMode
+{
+    /// <summary>
+    /// Default. Composite = arithmetic mean of the present feature scores. Forgiving towards
+    /// individual low-confidence features. Backward-compatible with the pre-Sprint-4 behaviour
+    /// — the 1795-track backtest from 2026-05-23 measured F1 = 0.65 (Precision 0.48, Recall 0.997)
+    /// at <c>min_confidence: 0.55</c> in this mode.
+    /// </summary>
+    ArithmeticMean,
+
+    /// <summary>
+    /// Composite = geometric mean of the present feature scores (with a 0.05 floor to avoid the
+    /// product collapsing to zero from a single absent-but-not-null feature). The geometric mean
+    /// is more sensitive to low scores than the arithmetic mean — a track with one strongly
+    /// disagreeing feature drops below the threshold even when the other six all line up.
+    /// Trades recall for precision; the 0.55 default min-confidence should be re-tuned downward
+    /// (try 0.40) when switching to this mode.
+    /// </summary>
+    GeometricMean,
 }
 
 /// <summary>
@@ -173,12 +199,20 @@ public sealed class TensorflowClassifierOptions
     public TensorflowModelOptions GenreElectronic { get; set; } = new() { MinConfidence = 0.65 };
 
     /// <summary>
-    /// Default <c>min_confidence: 0.50</c> — the 87-class Jamendo tagger has unique coverage
-    /// of Rock/Pop/R&amp;B/Soul/Jazz/Funk/Reggae/Classical that the heuristic doesn't try to
-    /// handle. Lower floor captures genuine signal; with 87 classes a 0.50 probability
-    /// already represents strong confidence.
+    /// Default <c>min_confidence: 0.50</c>, <c>aggregate_top_k: true</c>, <c>aggregate_min_total:
+    /// 0.30</c> — the 87-class Jamendo tagger has unique coverage of Rock/Pop/R&amp;B/Soul/Jazz/
+    /// Funk/Reggae/Classical that the heuristic doesn't try to handle. Aggregation is on by
+    /// default because 87 classes produces the same diffuse-output pattern as discogs-effnet:
+    /// a track's probability mass spreads across multiple sibling buckets of the same parent
+    /// genre, and the raw top-1 is brittle. The aggregate threshold is set slightly higher than
+    /// discogs-effnet (0.30 vs 0.25) because Jamendo's parent classes are coarser — a clear
+    /// winner should clear a wider bar.
     /// </summary>
-    public TensorflowModelOptions MtgJamendo { get; set; } = new();
+    public TensorflowModelOptions MtgJamendo { get; set; } = new()
+    {
+        AggregateTopK = true,
+        AggregateMinTotal = 0.30,
+    };
 
     /// <summary>
     /// Default <c>min_confidence: 0.50</c> and <c>aggregate_top_k: true</c> — the 400-class
@@ -255,6 +289,24 @@ public class AnalyzerOptions
     public string Provider { get; set; } = string.Empty;
     public int TimeoutSeconds { get; set; } = 30;
     public double MinConfidence { get; set; }
+
+    /// <summary>
+    /// How much to trust an existing tag for this dimension, on the same [0,1] scale as the
+    /// analyzer's <c>MinConfidence</c>. Higher = harder to displace.
+    /// <list type="bullet">
+    ///   <item><c>1.0</c> (default) — existing tags always win unless the policy is
+    ///   <c>always_overwrite</c>; reproduces classic <c>skip_if_present</c> behaviour.</item>
+    ///   <item><c>0.0</c> — analyzer/lookup wins whenever its value is usable
+    ///   (i.e. confidence ≥ <see cref="MinConfidence"/>); per-dimension always-overwrite.</item>
+    ///   <item>Any value in-between — the analyzer's confidence has to clear this floor to
+    ///   displace the existing tag. Useful when the existing tags come from a trusted source
+    ///   (e.g. Mixed-In-Key) and only a high-confidence analyzer hit should override.</item>
+    /// </list>
+    /// The <c>tagger scan --force-overwrite</c> CLI flag zeroes this floor for a single run
+    /// across all dimensions; <c>tagger validate</c> does the same internally so the backtest
+    /// doesn't measure existing tags passing through.
+    /// </summary>
+    public double ExistingConfidence { get; set; } = 1.0;
 }
 
 /// <summary>
@@ -272,6 +324,56 @@ public sealed class KeyAnalyzerOptions : AnalyzerOptions
 {
     /// <summary>CLI/log display only — TKEY and TXXX:CAMELOTKEY are always written in their canonical notation.</summary>
     public KeyDisplayNotation DisplayNotation { get; set; } = KeyDisplayNotation.Camelot;
+
+    /// <summary>
+    /// Which Essentia profile (or combination) to consume when reading the key. Essentia's music
+    /// extractor always emits all three profiles in parallel; this knob picks which one becomes
+    /// the resolved key. EDMA is the historical default — DJ-tuned and strongest on EDM/Beatport
+    /// material. <c>EnsembleVoting</c> compares all three and picks the majority winner, which
+    /// the 1795-track backtest from 2026-05-23 shows is the right choice for libraries with
+    /// non-EDM material (Hip-Hop, Trip-Hop, Reggae) where EDMA underperforms.
+    /// </summary>
+    public KeyProfileSelection Profile { get; set; } = KeyProfileSelection.Edma;
+
+    /// <summary>
+    /// Strength floor under which the <see cref="KeyProfileSelection.EdmaWithFallback"/> mode
+    /// abandons EDMA and switches to the higher-strength among Temperley / Krumhansl. The 1795-
+    /// track backtest shows EDMA's strength sits in [0.5, 0.9] when it's right; anything below
+    /// 0.5 correlates with material it wasn't trained for.
+    /// </summary>
+    public double EdmaWithFallbackThreshold { get; set; } = 0.5;
+}
+
+/// <summary>
+/// How the EssentiaKeyAnalyzer chooses between Essentia's three key profiles.
+/// </summary>
+public enum KeyProfileSelection
+{
+    /// <summary>EDMA only (default, backward-compatible). DJ-tuned profile.</summary>
+    Edma,
+
+    /// <summary>Temperley only. Better than EDMA on rock / pop / jazz material.</summary>
+    Temperley,
+
+    /// <summary>Krumhansl only. Classical-trained tonal-hierarchy model.</summary>
+    Krumhansl,
+
+    /// <summary>
+    /// Run all three profiles; pick the key that two or more profiles agree on. When no two
+    /// profiles agree, fall back to the highest-strength single profile. Captures the case
+    /// where one profile (typically EDMA on non-EDM) is wrong — the other two outvoting it
+    /// rescue the result. Confidence is the average of the strengths from the agreeing
+    /// profiles (or the single fallback's strength when there's no agreement).
+    /// </summary>
+    EnsembleVoting,
+
+    /// <summary>
+    /// Use EDMA unless its strength is below the configured threshold
+    /// (<c>KeyAnalyzerOptions.EdmaWithFallbackThreshold</c>), in which case fall back to
+    /// whichever of Temperley / Krumhansl reports the highest strength. Cheaper than full
+    /// ensemble voting and preserves EDMA's edge on EDM tracks.
+    /// </summary>
+    EdmaWithFallback,
 }
 
 /// <summary>
@@ -294,6 +396,17 @@ public sealed class BpmAnalyzerOptions : AnalyzerOptions
     /// left it alone (drift to 173 = 0.28%, above any reasonable tolerance). Must be &gt; 0.
     /// </summary>
     public double SnapStep { get; set; } = 0.5;
+
+    /// <summary>
+    /// Per-genre snap-step overrides. Looked up after the genre is resolved (same normalisation
+    /// as <see cref="TempoRangesByGenre"/>). When the resolved genre has an entry here, the
+    /// analyzer snaps to multiples of that step instead of the global <see cref="SnapStep"/>.
+    /// Useful when one genre's tempos are inherently coarser than the rest of the library —
+    /// e.g. Pop/Rock at integer BPMs (1.0) while House/Techno stay on the half-grid (0.5) and
+    /// DnB needs finer resolution (0.25) because 174.5 vs 174 matters for harmonic mixing.
+    /// </summary>
+    public Dictionary<string, double> SnapStepByGenre { get; set; }
+        = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Per-genre BPM ranges. The key is a canonical genre name (matched against the genre
@@ -403,6 +516,33 @@ public sealed class LookupOptions
     /// other means and don't want taxonomy filtering).
     /// </summary>
     public bool TaxonomyResolution { get; set; } = true;
+
+    /// <summary>
+    /// When <c>true</c>, the lookup-merge applies a Noisy-OR boost to candidate genres that
+    /// multiple providers independently returned: the merged confidence is <c>1 − Π(1 − cᵢ)</c>
+    /// over every contributing candidate. Captures the statistical insight that two independent
+    /// signals at confidence 0.5 are more reliable than a single signal at 0.8 — the boost only
+    /// fires when at least two distinct provider names contribute, so a single provider returning
+    /// the same value twice (rare, but happens with MusicBrainz tag aggregation) doesn't trigger
+    /// it. Default <c>false</c>: keeps the historical "highest-confidence per value wins"
+    /// behaviour. Worth enabling once the per-provider win-rates in <c>tagger validate</c>'s
+    /// Resolver-Trace section show overlapping but disagreeing providers.
+    /// </summary>
+    public bool ConsensusBoost { get; set; }
+
+    /// <summary>
+    /// Existing-tag confidence floor for genre/subgenre in the LEGACY merge path (only fires when
+    /// <see cref="TaxonomyResolution"/> is <c>false</c> or no taxonomy is loaded). Same semantics
+    /// as the per-analyzer <see cref="AnalyzerOptions.ExistingConfidence"/>:
+    /// <list type="bullet">
+    ///   <item><c>1.0</c> (default) — existing genre always wins (classic skip-if-present).</item>
+    ///   <item><c>0.0</c> — any non-empty lookup candidate overrides existing.</item>
+    ///   <item>any value in-between — lookup candidate's confidence must clear this floor to win.</item>
+    /// </list>
+    /// Has no effect when the taxonomy resolver is active — that path uses taxonomy-membership
+    /// protection instead, which is binary by design (existing-in-taxonomy is preserved).
+    /// </summary>
+    public double ExistingConfidence { get; set; } = 1.0;
 }
 
 /// <summary>
@@ -475,14 +615,35 @@ public sealed class MappingOptions
 ///   <item>Heuristic-first library (TF noisy on your material): set <see cref="ClassifierHeuristic"/>
 ///         &gt; <see cref="ClassifierAggregated"/>.</item>
 ///   <item>De-prioritise a single provider (e.g. Discogs returns weird Style tags on your library):
-///         currently not per-provider — open a follow-up if pattern-based config is needed
-///         (see <c>docs/PLAN_GENRE_CLASSIFICATION.md §5.7</c>).</item>
+///         put a name-keyed override into <see cref="Providers"/> — e.g. <c>discogs: 60</c> drops it
+///         below the classifier-aggregated tier.</item>
 /// </list>
 /// </summary>
 public sealed class SourcePriorityOptions
 {
-    /// <summary>Tier for online provider hits (musicbrainz / discogs / acoustid / lastfm). Default: 100.</summary>
+    /// <summary>
+    /// Default tier for online provider hits when <see cref="Providers"/> has no entry for the
+    /// provider's name. Default: 100.
+    /// </summary>
     public int Provider { get; set; } = 100;
+
+    /// <summary>
+    /// Per-provider tier overrides keyed by provider name (case-insensitive). When the resolver
+    /// inspects a candidate whose <c>Source</c> equals one of these keys, the matching value
+    /// wins over <see cref="Provider"/>. Use this to encode "MusicBrainz is more trustworthy than
+    /// Last.fm on my library" or to demote a noisy source below the classifier tiers without
+    /// disabling it entirely.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// providers:
+    ///   musicbrainz: 110
+    ///   discogs:     105
+    ///   lastfm:       40   # below ClassifierHeuristic — only used as last-resort signal
+    /// </code>
+    /// </example>
+    public Dictionary<string, int> Providers { get; set; }
+        = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Tier for TF classifier candidates with <c>:aggregated</c> suffix (B6.5 clear winner). Default: 80.</summary>
     public int ClassifierAggregated { get; set; } = 80;

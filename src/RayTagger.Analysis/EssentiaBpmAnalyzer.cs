@@ -72,50 +72,15 @@ public sealed class EssentiaBpmAnalyzer : IBpmAnalyzer
         var confidence = Math.Clamp(result.BpmConfidence ?? 0, 0, 1);
         var raw = result.Bpm.Value;
 
-        // No genre hint → leave the value untouched. The pipeline-level snap will tidy it up
-        // alongside existing-tag / lookup / rule values uniformly.
-        if (tempoRange is null || !tempoRange.HasRange)
-        {
-            _logger.LogDebug(
-                "Essentia BPM={Bpm:F2} confidence={Confidence:F2} (no genre range) for {Path}",
-                raw, confidence, file.Path);
-            return new BpmResult(raw, confidence);
-        }
-
-        // In-range raw → just snap. wasSnapped is true only if the snap actually rounded.
-        if (tempoRange.Contains(raw))
-        {
-            var snappedInRange = BpmSnapper.Snap(raw, _snapTolerancePercent, _snapStep, out var didSnapInRange);
-            _logger.LogDebug(
-                "Essentia BPM={Bpm:F2} in range {Range} → snap={Snapped} (snapped={Snapped2}) for {Path}",
-                raw, tempoRange, snappedInRange, didSnapInRange, file.Path);
-            return new BpmResult(snappedInRange, confidence, WasSnapped: didSnapInRange);
-        }
-
-        // Out-of-range raw → fold (×2 below the floor, ÷2 above the ceiling) and snap. Both folds
-        // are the documented DJ-convention escape hatch: a 86 BPM DnB intro doubles to 172 (DJ
-        // notation), a 154 BPM dubstep track halves to 77.
-        var folded = raw < tempoRange.Min!.Value ? raw * 2.0 : raw / 2.0;
-        var snappedFolded = BpmSnapper.Snap(folded, _snapTolerancePercent, _snapStep, out var foldedSnapped);
-
-        if (tempoRange.Contains(snappedFolded))
-        {
-            _logger.LogDebug(
-                "Essentia BPM={Raw:F2} folded to {Folded:F2} → snap={Snapped} in range {Range} for {Path}",
-                raw, folded, snappedFolded, tempoRange, file.Path);
-            // The fold was the real correction; whether the subsequent snap also nudged is
-            // surfaced as WasSnapped so the dark-red highlight still fires when applicable.
-            return new BpmResult(snappedFolded, confidence, WasSnapped: foldedSnapped);
-        }
-
-        // Folded-and-snapped value STILL outside the range → the configured genre interval and
-        // the audio's natural tempo can't be reconciled. Best signal is the raw Essentia value;
-        // mark forced-fallback so the UI dark-blues the cell and the user knows to investigate.
-        var snappedRaw = BpmSnapper.Snap(raw, _snapTolerancePercent, _snapStep, out var rawSnapped);
+        // Delegate the fold + snap to BpmFolder so TagPipeline can apply the same rules with a
+        // post-lookup genre range (Sprint 5 / #15). The folder returns raw+confidence verbatim
+        // when no range is configured — matches the original "leave the pipeline-level snap to
+        // tidy up" behaviour.
+        var folded = BpmFolder.Apply(raw, confidence, tempoRange, _snapTolerancePercent, _snapStep);
         _logger.LogDebug(
-            "Essentia BPM={Raw:F2} fold to {Folded:F2}/{SnappedFolded:F2} still out of range {Range}; " +
-            "forcing fallback to snap(raw)={SnappedRaw} for {Path}",
-            raw, folded, snappedFolded, tempoRange, snappedRaw, file.Path);
-        return new BpmResult(snappedRaw, confidence, WasSnapped: rawSnapped, IsForcedFallback: true);
+            "Essentia BPM={Raw:F2} confidence={Confidence:F2} range={Range} → {Resolved:F2} " +
+            "(snapped={Snapped} forced-fallback={Fallback}) for {Path}",
+            raw, confidence, tempoRange, folded.Bpm, folded.WasSnapped, folded.IsForcedFallback, file.Path);
+        return folded;
     }
 }

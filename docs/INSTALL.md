@@ -272,6 +272,104 @@ fpcalc -version
 
 ---
 
+## Optional: TensorFlow-Genre-Klassifikatoren
+
+Tagger bringt drei optionale, audio-basierte Genre-Klassifikatoren mit
+(`genre_electronic`, `mtg_jamendo`, `discogs_effnet`). Sie sind in
+`tagger.yaml` per Default **alle aus** — du musst sie explizit aktivieren
+und dafür die Python-Laufzeit von Essentia + TensorFlow installieren.
+
+Wenn du nur die DSP-Heuristik (`analysis.genre_classifier.heuristic`) nutzt,
+brauchst du **nichts** hier auf der Seite — die Heuristik läuft im selben
+Essentia-Subprozess wie BPM/Key/Energy.
+
+### Voraussetzungen
+
+```bash
+# Python 3.9 – 3.12 (TensorFlow-Wheels gibt es nur für diese Range)
+python3 --version
+
+# essentia-tensorflow zieht TensorFlow als transitive Dependency
+pip install essentia-tensorflow
+```
+
+> Apple Silicon: `essentia-tensorflow` liefert kein arm64-Wheel direkt,
+> sondern verlangt das `tensorflow-macos` + `tensorflow-metal` Setup. Bei
+> Problemen einen frischen venv aufsetzen:
+> `python3.11 -m venv .venv && source .venv/bin/activate && pip install tensorflow-macos tensorflow-metal essentia-tensorflow`.
+
+### Helper-Script
+
+Der eigentliche Klassifikator läuft als Subprozess über ein mitgeliefertes
+Python-Script:
+
+```
+tools/raytagger-genre-classifier/
+├── classify.py          # Einstiegspunkt — wird von Tagger aufgerufen
+├── remap/               # Per-Model-Label-Remap (z.B. "Drum n Bass" → "Drum and Bass")
+└── dev/
+    └── analyze_remap_coverage.py   # Coverage-Tool für Taxonomy-Pflege
+```
+
+Tagger findet das Script relativ zur ausführbaren Datei oder via
+`analysis.genre_classifier.tensorflow.python_helper_path` in `tagger.yaml`.
+
+### Modell-Bootstrap
+
+Die `.pb`-Modelldateien werden beim ersten Aktivieren via
+`raytagger setup` (bzw. automatisch beim ersten `scan`) aus dem
+Manifest `native-tools.yaml` (Sektion `models:`) gezogen — SHA-256-pinned
+und atomar in den User-Cache promotet:
+
+- macOS  `~/Library/Application Support/RayTagger/models/<model-key>/`
+- Linux  `~/.local/share/RayTagger/models/<model-key>/`
+- Windows  `%LOCALAPPDATA%\RayTagger\models\<model-key>\`
+
+### Aktivierung in `tagger.yaml`
+
+```yaml
+analysis:
+  genre_classifier:
+    heuristic:
+      enabled: true                  # läuft ohne Python — kein extra Setup
+      min_confidence: 0.55
+    tensorflow:
+      genre_electronic:
+        enabled: true                # nur einschalten wenn pip-Setup oben sitzt
+        min_confidence: 0.65
+      mtg_jamendo:
+        enabled: false               # 87-class Jamendo
+        min_confidence: 0.50
+      discogs_effnet:
+        enabled: true                # 400-class, mit Per-Parent-Aggregation
+        min_confidence: 0.50
+        aggregate_top_k: true        # default an — sonst sehr viele Long-Tail-Kandidaten
+```
+
+### Verifikation
+
+Beim Start zeigt Tagger pro aktivem Klassifikator eine Probe-Zeile:
+
+```
+INFO  Heuristic genre classifier verfügbar
+INFO  TensorFlow genre_electronic verfügbar    (python3.11, tensorflow 2.15)
+INFO  TensorFlow discogs_effnet verfügbar      (model SHA matched, 400 classes)
+```
+
+Fehlt Python oder ein Modul, wird der betroffene Klassifikator stillschweigend
+deaktiviert. `raytagger scan --verbose` zeigt den Grund.
+
+### Subprozess-Kosten (relevant für große Bibliotheken)
+
+Auf Apple Silicon kostet ein TF-Modell ca. **1.5 s pro Track**. Bei 1000 Tracks
+und allen drei Modellen aktiv: ~75 Minuten allein für die Klassifikatoren —
+zusätzlich zu BPM/Key/Energy + Online-Lookup. Der CLI-Startup-Banner surfacet
+die kumulative Schätzung beim Scan-Start. Optimierungen (Daemon-Mode,
+Batch-Mode, File-Dedup) sind in `docs/PLAN_GENRE_CLASSIFICATION.md §5.7` als
+deferred work dokumentiert.
+
+---
+
 ## Nach der Installation
 
 Tagger probt beim Start, ob die Binaries gefunden werden, und gibt eine Status-Zeile pro Tool aus. Schnellcheck:

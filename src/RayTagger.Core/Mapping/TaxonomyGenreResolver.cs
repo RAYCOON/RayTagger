@@ -19,6 +19,15 @@ namespace RayTagger.Core.Mapping;
 /// </remarks>
 public sealed class TaxonomyGenreResolver
 {
+    /// <summary>
+    /// Minimum confidence the top-1 candidate must clear before the resolver's "no taxonomy
+    /// match" fallback emits it into an empty-genre slot. Without this floor a low-confidence
+    /// user-tag (LastFm "favourite"/"seen-live" with confidence ~0.05) would silently land in
+    /// the genre slot just because the slot was empty. Set low (0.20) — moderate-confidence
+    /// provider hits should still rescue empty slots, this only blocks pure noise.
+    /// </summary>
+    public const double FallbackMinConfidence = 0.20;
+
     private readonly ConditionalWeakTable<Taxonomy, CompiledTaxonomy> _cache = new();
 
     /// <summary>
@@ -122,12 +131,19 @@ public sealed class TaxonomyGenreResolver
                 ? chosenGenre
                 : null;
         }
-        else if (string.IsNullOrEmpty(existingGenre) && sortedCandidates.Count > 0)
+        else if (string.IsNullOrEmpty(existingGenre)
+                 && sortedCandidates.Count > 0
+                 && sortedCandidates[0].Confidence >= FallbackMinConfidence)
         {
             // Fallback: no taxonomy match anywhere, but the slot is empty — take the top-1
             // candidate from the SORTED list (highest source-priority + highest confidence)
             // so the user gets *something* (which they can later add to the taxonomy or
             // rewrite via a mapping rule). Subgenre has no fallback — it has no anchor.
+            //
+            // Gated by FallbackMinConfidence: without that floor a LastFm user-tag with
+            // confidence ~0.05 (e.g. "favourite", "seen-live") would silently land in the
+            // genre slot. The threshold is intentionally low — moderate-confidence provider
+            // hits should still rescue an empty slot, just not noise.
             proposedGenre = sortedCandidates[0].Value;
             fallbackApplied = true;
             // Surface the source so callers can attribute the value (UI, write-stage confidence).
@@ -164,8 +180,9 @@ public sealed class TaxonomyGenreResolver
     /// See <c>docs/PLAN_GENRE_CLASSIFICATION.md §4.0d</c> for rationale.
     /// </summary>
     /// <remarks>
-    /// Bucket assignment is hardcoded — only the tier VALUES are tunable. To add new buckets
-    /// (e.g. per-provider priorities) we'd need pattern-based config; that's deferred per §5.7.
+    /// Classifier bucket assignment is hardcoded (per-suffix routing); provider candidates check
+    /// <see cref="SourcePriorityOptions.Providers"/> first for a name-keyed override before
+    /// falling back to <see cref="SourcePriorityOptions.Provider"/>.
     /// </remarks>
     internal static int SourcePriority(string source, SourcePriorityOptions opts)
     {
@@ -201,7 +218,14 @@ public sealed class TaxonomyGenreResolver
         {
             return opts.ClassifierOther;
         }
-        // Anything else (acoustid/musicbrainz/discogs/lastfm/...) treated as provider.
+        // Provider candidate: check the per-name override map before falling back to the
+        // generic Provider tier. The lookup runs on the SOURCE string verbatim (provider names
+        // like "musicbrainz", "discogs") — the Dictionary's StringComparer.OrdinalIgnoreCase
+        // is set in TaggerOptionsLoader.NormaliseDictionaryComparers after YAML binding.
+        if (opts.Providers.TryGetValue(source, out var perProvider))
+        {
+            return perProvider;
+        }
         return opts.Provider;
     }
 

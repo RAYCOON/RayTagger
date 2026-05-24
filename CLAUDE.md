@@ -120,17 +120,25 @@ The `TXXX:*` frame choices follow conventions used by Traktor / Beatport / vario
 
 ## Write Policy / Field-Source Resolution
 
-The write stage operates on `ResolvedTrackTags` where each field is tagged with its `TagFieldSource ∈ {Existing, Analysis, Lookup, Rules}`. `existing_tags_policy` rules:
+The write stage operates on `ResolvedTrackTags` where each field is tagged with its `TagFieldSource ∈ {Existing, Analysis, Lookup, Rules}`. Two per-dimension knobs govern the merge:
 
-- `skip_if_present`: preserve fields with source `Existing`; write fields from `Analysis`, `Lookup`, **and `Rules`**.
-- `fill_only_empty`: write `Analysis`/`Lookup` only when existing is empty; `Rules` always writes.
-- `always_overwrite`: write everything.
+- **`min_confidence`** (per analyzer): floor for Analyzer/Lookup output. Below this, the value is dropped before any merge decision — a low-confidence Essentia BPM (from `bpm_histogram_first_peak_weight`) never reaches the merge stage.
+- **`existing_confidence`** (per dimension, [0,1]): how readily an existing tag is displaced.
+  - `1.0` (default) — existing wins (analyzer confidences rarely hit exactly 1.0).
+  - `0.0` — every usable analyzer/lookup hit overrides existing (per-dimension always-overwrite).
+  - `x` in between — analyzer's own confidence must beat `x` to overwrite.
 
-**Key invariant:** mapping rules (`Rules` source) always win, regardless of policy. Rules are the user's explicit declarative intent — silently dropping them because of `skip_if_present` would break user expectations.
+Independent knobs per dimension: BPM can be permissive (`existing_confidence: 0`) while Key stays protected (`1.0`) — the historic global policy could only flip both at once.
 
-Per-dimension `min_confidence` thresholds gate `Analysis` / `Lookup` values *before* this policy table applies — a low-confidence Essentia BPM (from `bpm_histogram_first_peak_weight`) never reaches the policy.
+**Key invariant:** mapping rules (`Rules` source) always win, regardless of `existing_confidence`. Rules are the user's explicit declarative intent — silently dropping them would break expectations.
 
-See `docs/ARCHITECTURE.md §6.2` for the full matrix.
+**Legacy `read.existing_tags_policy`** (removed 2026-05): the loader auto-migrates the deprecated key to the equivalent per-dim values and emits a deprecation warning:
+- `skip_if_present` / `fill_only_empty` ≡ `existing_confidence: 1.0` (default)
+- `always_overwrite` ≡ `existing_confidence: 0.0`
+
+**CLI override**: `tagger scan --force-overwrite` zeroes every `existing_confidence` for one run without editing `tagger.yaml` — convenience for re-tagging an entire library after a Tagger update. `tagger validate` always runs in this mode (otherwise existing MIK tags would inflate match rates to 100 %).
+
+See `docs/ARCHITECTURE.md §6.2` and `docs/FIELD_RESOLUTION.md` for the full matrix.
 
 ## Genre Resolution (taxonomy-aware)
 

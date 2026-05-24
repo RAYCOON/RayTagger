@@ -9,6 +9,11 @@ public class MappingRulesLoaderTests
     [Fact]
     public void Loads_the_example_yaml_successfully()
     {
+        // Smoke test: the shipped example yaml must parse cleanly and contain the two iconic
+        // rule shapes the docs reference — a BPM-conditioned Tech House peak-slot tag and the
+        // catch-all fallback that fills any track still missing a genre. The exact rule names
+        // are part of the example yaml's documented surface; update both here and there in
+        // lockstep when the sample is revised.
         var yaml = File.ReadAllText(RepoRoot.Samples("mappings.example.yaml"));
 
         var ruleSet = MappingRulesLoader.LoadFromString(yaml);
@@ -16,8 +21,8 @@ public class MappingRulesLoaderTests
         ruleSet.Version.Should().Be(1);
         ruleSet.Defaults.OnMatch.Should().Be(OnMatch.Stop);
         ruleSet.Rules.Should().NotBeEmpty();
-        ruleSet.Rules.Should().Contain(r => r.Name == "Tech House — peak time");
-        ruleSet.Rules.Should().Contain(r => r.Name == "Default: still no genre → 'Unsorted'");
+        ruleSet.Rules.Should().Contain(r => r.Name == "Driving — Tech House peak slot");
+        ruleSet.Rules.Should().Contain(r => r.Name == "Default: kein Genre → 'Unsorted'");
     }
 
     [Fact]

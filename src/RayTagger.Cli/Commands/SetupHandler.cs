@@ -43,6 +43,8 @@ internal static class SetupHandler
             return ExitCodes.InvalidConfiguration;
         }
 
+        Output.DeprecationRenderer.Render(console, options);
+
         // Same DI pattern as ScanHandler: container owns the Serilog factory, and pools the
         // bootstrap HttpClient through IHttpClientFactory.
         var services = new ServiceCollection();

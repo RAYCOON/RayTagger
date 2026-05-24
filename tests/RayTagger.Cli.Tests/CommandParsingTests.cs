@@ -22,7 +22,8 @@ public class CommandParsingTests
 
         var optionNames = scan.Options.Select(o => o.Name).ToHashSet(StringComparer.Ordinal);
 
-        optionNames.Should().Contain(["--config", "--source", "--dry-run", "--write", "--verbose"]);
+        optionNames.Should().Contain(
+            ["--config", "--source", "--dry-run", "--write", "--force-overwrite", "--verbose"]);
     }
 
     [Fact]

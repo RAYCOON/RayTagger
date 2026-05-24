@@ -259,6 +259,50 @@ public class TagPipelineTests
     }
 
     [Fact]
+    public async Task BpmCrossCheck_reports_relative_drift_when_existing_and_analyzer_disagree()
+    {
+        // Existing 120, analyzer 128 (confidence above floor). Pipeline must emit a drift of
+        // |120-128|/120 ≈ 0.0667 regardless of which value the merge picks — the diagnostic is
+        // there so the user can spot Mixed-In-Key vs Essentia disagreements before a mix.
+        var file = MakeTrackFile("drift.mp3");
+        var existing = new TrackTags(Bpm: 120);
+        var analysisRunner = new StubAnalysisRunner(new BpmResult(128.0, 0.9));
+
+        var outcome = await RunSingle(file, existing, analysisRunner);
+
+        outcome.BpmCrossCheckDelta.Should().NotBeNull();
+        outcome.BpmCrossCheckDelta!.Value.Should().BeApproximately(8.0 / 120.0, 1e-6);
+    }
+
+    [Fact]
+    public async Task BpmCrossCheck_is_null_when_either_side_is_missing()
+    {
+        // No existing BPM → no cross-check possible. Outcome's delta must be null so the UI
+        // doesn't try to flag a non-issue.
+        var file = MakeTrackFile("no-existing.mp3");
+        var existing = new TrackTags();
+        var analysisRunner = new StubAnalysisRunner(new BpmResult(128.0, 0.9));
+
+        var outcome = await RunSingle(file, existing, analysisRunner);
+
+        outcome.BpmCrossCheckDelta.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task BpmCrossCheck_skips_when_analyzer_confidence_below_min()
+    {
+        // Analyzer confidence below the merge's MinConfidence floor — comparing the noisy BPM
+        // against the trusted existing tag would surface false positives. Skip the cross-check.
+        var file = MakeTrackFile("noisy.mp3");
+        var existing = new TrackTags(Bpm: 120);
+        var analysisRunner = new StubAnalysisRunner(new BpmResult(128.0, 0.1));   // below 0.4 default
+
+        var outcome = await RunSingle(file, existing, analysisRunner);
+
+        outcome.BpmCrossCheckDelta.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Analyzer_snap_flag_propagates_when_analysis_value_passes_through()
     {
         // Analyzer pre-snapped 122.07 → 122.0 (in-range path). The pipeline-level snap is a
@@ -287,6 +331,122 @@ public class TagPipelineTests
         outcome.BpmWasSnapped.Should().BeTrue();
         outcome.BpmIsForcedFallback.Should().BeFalse();
         outcome.Resolved.Bpm.Value.Should().Be(126.0);
+    }
+
+    [Fact]
+    public async Task Bpm_refold_recovers_DnB_track_with_no_existing_genre_after_lookup()
+    {
+        // The analyzer saw no existing Genre → no range → BPM passes through raw at 86. Lookup
+        // (here: a mapping rule that sets Genre = "Drum and Bass") supplies the genre after the
+        // fact. The pipeline must re-fold 86 → 172 using the genre's tempo range.
+        var file = MakeTrackFile("dnb-no-tag.mp3");
+        var existing = new TrackTags();   // no genre at all
+        var analysisRunner = new StubAnalysisRunner(new BpmResult(86.0, 0.7));
+
+        var options = MakeOptions(dryRun: true);
+        options.Analysis.Bpm.TempoRangesByGenre = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Drum and Bass"] = new BpmTempoRange(170, 175),
+        };
+        var ruleSet = new MappingRuleSet
+        {
+            Version = 1,
+            Rules =
+            [
+                new MappingRule
+                {
+                    Name = "force genre",
+                    Set = new SetClause { Genre = "Drum and Bass" },
+                },
+            ],
+        };
+
+        var outcome = await RunSingleWithOptions(file, existing, analysisRunner, options, ruleSet);
+
+        outcome.Resolved.Bpm.Value.Should().Be(172.0,
+            because: "post-lookup re-fold doubled 86 → 172 via the configured DnB range");
+    }
+
+    [Fact]
+    public async Task Bpm_refold_skipped_when_existing_genre_already_drove_the_analyzer()
+    {
+        // Existing Genre = "Drum and Bass" → the analyzer already had the range and produced
+        // 172. Re-fold must NOT fire (the resolver-source for Genre is Existing, not Lookup).
+        var file = MakeTrackFile("dnb-tagged.mp3");
+        var existing = new TrackTags(Genre: "Drum and Bass");
+        var analysisRunner = new StubAnalysisRunner(new BpmResult(172.0, 0.7));
+
+        var options = MakeOptions(dryRun: true);
+        options.Analysis.Bpm.TempoRangesByGenre = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Drum and Bass"] = new BpmTempoRange(170, 175),
+        };
+
+        var outcome = await RunSingleWithOptions(file, existing, analysisRunner, options);
+
+        outcome.Resolved.Bpm.Value.Should().Be(172.0);
+    }
+
+    [Fact]
+    public async Task Per_genre_snap_step_overrides_global_step_when_genre_matches()
+    {
+        // Existing genre "DnB" + per-genre snap_step 0.25 (finer than the global 0.5). The pipeline
+        // looks up the genre in SnapStepByGenre and uses 0.25 — drift 174.18 → 174.25 (tolerance
+        // 0.04%) instead of leaving the value alone at the global 0.5 grid (drift to 174 = 0.10%,
+        // still inside default 0.12 tolerance but the wrong rounding).
+        var file = MakeTrackFile("dnb.mp3");
+        var existing = new TrackTags(Genre: "DnB", Bpm: 174.18);
+
+        var options = MakeOptions(dryRun: true);
+        options.Analysis.Bpm.SnapStepByGenre = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["DnB"] = 0.25,
+        };
+
+        var outcome = await RunSingleWithOptions(file, existing, NoopAnalysisRunner.Instance, options);
+
+        outcome.Resolved.Bpm.Value.Should().Be(174.25,
+            because: "0.25-grid snap caught the value where global 0.5-grid would have rounded to 174.0");
+    }
+
+    [Fact]
+    public async Task Per_genre_snap_step_ignored_when_genre_not_in_map()
+    {
+        // Genre "Rock" not in SnapStepByGenre — pipeline uses the global SnapStep (0.5).
+        var file = MakeTrackFile("rock.mp3");
+        var existing = new TrackTags(Genre: "Rock", Bpm: 120.4);
+
+        var options = MakeOptions(dryRun: true);
+        options.Analysis.Bpm.SnapStepByGenre = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["DnB"] = 0.25,   // not relevant for this track
+        };
+
+        var outcome = await RunSingleWithOptions(file, existing, NoopAnalysisRunner.Instance, options);
+
+        outcome.Resolved.Bpm.Value.Should().Be(120.5,
+            because: "global 0.5 step takes over when there's no per-genre override for the track's genre");
+    }
+
+    private static async Task<PipelineOutcome> RunSingleWithOptions(
+        TrackFile file, TrackTags existing, IAnalysisRunner runner, TaggerOptions options,
+        MappingRuleSet? rules = null)
+    {
+        var discovery = Substitute.For<IFileDiscoveryService>();
+        discovery.EnumerateAsync(Arg.Any<ScanOptions>(), Arg.Any<CancellationToken>())
+            .Returns(AsAsync(file));
+        var reader = Substitute.For<ITagReaderAdapter>();
+        reader.Read(file.Path).Returns(existing);
+        var writer = Substitute.For<ITagWriterAdapter>();
+
+        var pipeline = new TagPipeline(
+            discovery, reader, writer, runner,
+            NoopLookupRunner.Instance, NoopGenreClassifierRunner.Instance, new MappingRuleEngine(),
+            NoopSortService.Instance, new TaxonomyGenreResolver(), NullLogger<TagPipeline>.Instance);
+
+        var outcomes = await CollectAsync(pipeline.RunAsync(options, rules ?? new MappingRuleSet()));
+        outcomes.Should().HaveCount(1);
+        return outcomes[0];
     }
 
     private static async Task<PipelineOutcome> RunSingle(TrackFile file, TrackTags existing, IAnalysisRunner runner)

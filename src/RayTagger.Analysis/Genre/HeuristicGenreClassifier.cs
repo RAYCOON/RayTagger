@@ -6,17 +6,30 @@ namespace RayTagger.Analysis.Genre;
 
 /// <summary>
 /// Tier-3 heuristic genre classifier — pure-rule scoring over DSP descriptors from the existing
-/// Essentia run. Emits at most one candidate per genre in the 8-entry lineup
-/// (House / Techno / Trance / Drum and Bass / Dubstep / Hip Hop / Ambient / Downtempo) with the
-/// composite score as confidence. Candidates below
-/// <see cref="HeuristicClassifierOptions.MinConfidence"/> are dropped — when no genre clears
-/// the floor the classifier emits nothing, by design. See
-/// <c>docs/PLAN_GENRE_CLASSIFICATION.md §3.5</c>.
+/// Essentia run. <b>EDM-focused 8-genre lineup</b>: House / Techno / Trance / Drum and Bass /
+/// Dubstep / Hip Hop / Ambient / Downtempo. Emits at most one candidate per genre with the
+/// composite score as confidence; candidates below <see cref="HeuristicClassifierOptions.MinConfidence"/>
+/// are dropped. See <c>docs/PLAN_GENRE_CLASSIFICATION.md §3.5</c>.
 /// </summary>
 /// <remarks>
-/// Same-genre subgenres (Tech House vs Deep House, Detroit vs Berlin Techno, Liquid vs Neurofunk
-/// DnB) are deliberately out of scope — those need timbral/harmonic analysis the heuristic
-/// doesn't have. Phase B's <c>discogs_effnet</c> TF model is the subgenre source.
+/// <para>
+/// <b>Out-of-scope genres</b>: Rock, Pop, Jazz, R&amp;B, Soul, Funk, Reggae, Classical, Country,
+/// Folk, Metal — the heuristic has no DSP signature for these and will silently return zero
+/// candidates for tracks in those families. Use the <c>mtg_jamendo</c> TF model (87 classes,
+/// covers exactly this gap) when your library contains non-EDM material.
+/// </para>
+/// <para>
+/// <b>Same-genre subgenres</b> (Tech House vs Deep House, Detroit vs Berlin Techno, Liquid vs
+/// Neurofunk DnB) are also out of scope — those need timbral/harmonic analysis the heuristic
+/// doesn't have. The <c>discogs_effnet</c> TF model is the subgenre source.
+/// </para>
+/// <para>
+/// <b>Empirical accuracy</b> (1795-track backtest 2026-05-23, F1 = 0.65 at default
+/// min_confidence): the score function is confidence-insensitive (TP/FP counts barely change
+/// between thresholds 0.05 and 0.55), so the classifier acts more like a permissive
+/// always-emit-something than a calibrated probability. Useful as a fallback when TF models
+/// are disabled; not a substitute for them.
+/// </para>
 /// </remarks>
 public sealed class HeuristicGenreClassifier : IGenreClassifier
 {
@@ -51,7 +64,7 @@ public sealed class HeuristicGenreClassifier : IGenreClassifier
             return GenreClassificationResult.Empty;
         }
 
-        var scored = ScoreAll(result);
+        var scored = ScoreAll(result, _options.ScoringMode);
         var candidates = new List<GenreCandidate>();
         foreach (var (genre, confidence) in scored.OrderByDescending(s => s.Confidence))
         {
@@ -81,46 +94,77 @@ public sealed class HeuristicGenreClassifier : IGenreClassifier
     /// Hip Hop / Ambient / Downtempo. Same-genre subgenres (Tech House vs Deep House) are out
     /// of scope — heuristics propose, taxonomy + rules dispose.
     /// </remarks>
-    internal static IReadOnlyList<(string Genre, double Confidence)> ScoreAll(EssentiaResult r)
+    /// <summary>
+    /// Backward-compatible overload — runs scoring in <see cref="HeuristicScoringMode.ArithmeticMean"/>
+    /// mode. Existing tests that don't care about the scoring strategy keep working unchanged.
+    /// </summary>
+    internal static IReadOnlyList<(string Genre, double Confidence)> ScoreAll(EssentiaResult r) =>
+        ScoreAll(r, HeuristicScoringMode.ArithmeticMean);
+
+    internal static IReadOnlyList<(string Genre, double Confidence)> ScoreAll(
+        EssentiaResult r, HeuristicScoringMode mode)
     {
         ArgumentNullException.ThrowIfNull(r);
         return
         [
-            ("House", ScoreGenre(r, GenreProfile.House)),
-            ("Techno", ScoreGenre(r, GenreProfile.Techno)),
-            ("Trance", ScoreGenre(r, GenreProfile.Trance)),
-            ("Drum and Bass", ScoreGenre(r, GenreProfile.DrumAndBass)),
-            ("Dubstep", ScoreGenre(r, GenreProfile.Dubstep)),
-            ("Hip Hop", ScoreGenre(r, GenreProfile.HipHop)),
-            ("Ambient", ScoreGenre(r, GenreProfile.Ambient)),
-            ("Downtempo", ScoreGenre(r, GenreProfile.Downtempo)),
+            ("House", ScoreGenre(r, GenreProfile.House, mode)),
+            ("Techno", ScoreGenre(r, GenreProfile.Techno, mode)),
+            ("Trance", ScoreGenre(r, GenreProfile.Trance, mode)),
+            ("Drum and Bass", ScoreGenre(r, GenreProfile.DrumAndBass, mode)),
+            ("Dubstep", ScoreGenre(r, GenreProfile.Dubstep, mode)),
+            ("Hip Hop", ScoreGenre(r, GenreProfile.HipHop, mode)),
+            ("Ambient", ScoreGenre(r, GenreProfile.Ambient, mode)),
+            ("Downtempo", ScoreGenre(r, GenreProfile.Downtempo, mode)),
         ];
     }
 
-    private static double ScoreGenre(EssentiaResult r, GenreProfile p)
-    {
-        // Stack-based accumulation — called 8× per track (once per genre), so an allocation
-        // here multiplies. The seven score methods all return Nullable<double>; null means
-        // "feature absent for this track" and skips the contribution (does not zero it).
-        double sum = 0;
-        var count = 0;
-        Accumulate(p.ScoreBpm(r.Bpm), ref sum, ref count);
-        Accumulate(p.ScoreKeyScale(r.KeyScale), ref sum, ref count);
-        Accumulate(p.ScoreChordsChangesRate(r.ChordsChangesRate), ref sum, ref count);
-        Accumulate(p.ScoreSpectralCentroid(r.SpectralCentroidMean), ref sum, ref count);
-        Accumulate(p.ScoreDynamicComplexity(r.DynamicComplexity), ref sum, ref count);
-        Accumulate(p.ScoreDanceability(r.Danceability), ref sum, ref count);
-        Accumulate(p.ScoreBeatsLoudness(r.BeatsLoudness), ref sum, ref count);
+    /// <summary>
+    /// Minimum factor under which a single feature score is allowed to depress the geometric mean.
+    /// Without this floor a feature reading of 0 (e.g. BPM way outside the genre's range) would
+    /// collapse the product to zero across the board — the floor preserves the "weakest link
+    /// matters" intuition without giving any single feature absolute veto power.
+    /// </summary>
+    private const double GeometricMeanFloor = 0.05;
 
-        return count == 0 ? 0 : sum / count;
+    private static double ScoreGenre(EssentiaResult r, GenreProfile p, HeuristicScoringMode mode)
+    {
+        // Collect the present feature scores once — both scoring modes iterate them.
+        Span<double> scores = stackalloc double[7];
+        var count = 0;
+        AddIfPresent(p.ScoreBpm(r.Bpm), scores, ref count);
+        AddIfPresent(p.ScoreKeyScale(r.KeyScale), scores, ref count);
+        AddIfPresent(p.ScoreChordsChangesRate(r.ChordsChangesRate), scores, ref count);
+        AddIfPresent(p.ScoreSpectralCentroid(r.SpectralCentroidMean), scores, ref count);
+        AddIfPresent(p.ScoreDynamicComplexity(r.DynamicComplexity), scores, ref count);
+        AddIfPresent(p.ScoreDanceability(r.Danceability), scores, ref count);
+        AddIfPresent(p.ScoreBeatsLoudness(r.BeatsLoudness), scores, ref count);
+
+        if (count == 0) return 0;
+
+        if (mode == HeuristicScoringMode.GeometricMean)
+        {
+            // Geometric mean with a floor so a single absent-but-not-null feature doesn't
+            // collapse the product. A track with one strongly disagreeing feature drops below
+            // the threshold even when the others all line up.
+            double product = 1.0;
+            for (var i = 0; i < count; i++)
+            {
+                product *= Math.Max(scores[i], GeometricMeanFloor);
+            }
+            return Math.Pow(product, 1.0 / count);
+        }
+
+        // Arithmetic mean (default / legacy).
+        double sum = 0;
+        for (var i = 0; i < count; i++) sum += scores[i];
+        return sum / count;
     }
 
-    private static void Accumulate(double? value, ref double sum, ref int count)
+    private static void AddIfPresent(double? value, Span<double> scores, ref int count)
     {
         if (value.HasValue)
         {
-            sum += value.Value;
-            count++;
+            scores[count++] = value.Value;
         }
     }
 

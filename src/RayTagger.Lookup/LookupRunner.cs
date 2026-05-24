@@ -23,6 +23,7 @@ public sealed class LookupRunner : ILookupRunner
     private readonly ILookupCache? _cache;
     private readonly TimeSpan _cacheTtl;
     private readonly bool _enabled;
+    private readonly bool _consensusBoost;
     private readonly ILogger<LookupRunner> _logger;
 
     public LookupRunner(
@@ -38,6 +39,7 @@ public sealed class LookupRunner : ILookupRunner
         _enabled = options.Enabled;
         _cache = options.Cache.Enabled ? cache : null;
         _cacheTtl = TimeSpan.FromDays(Math.Max(1, options.Cache.TtlDays));
+        _consensusBoost = options.ConsensusBoost;
         _logger = logger;
 
         // Filter + order the registered providers according to `lookup.providers` in config. An
@@ -155,8 +157,8 @@ public sealed class LookupRunner : ILookupRunner
         }
 
         var aggregate = new LookupResult(
-            GenreCandidates: MergeRanked(allGenres),
-            SubGenreCandidates: MergeRanked(allSubGenres),
+            GenreCandidates: MergeRanked(allGenres, _consensusBoost),
+            SubGenreCandidates: MergeRanked(allSubGenres, _consensusBoost),
             MbReleaseId: releaseMbid,
             MbRecordingId: recordingMbid);
 
@@ -185,20 +187,83 @@ public sealed class LookupRunner : ILookupRunner
         return new LookupRunResult(aggregate, trace);
     }
 
-    private static List<GenreCandidate> MergeRanked(IEnumerable<GenreCandidate> candidates)
+    /// <summary>
+    /// Merges every provider's candidate list into a single ranked aggregate. Two modes:
+    /// <list type="bullet">
+    ///   <item><c>consensusBoost=false</c> (default): for each genre value, the highest-confidence
+    ///   candidate across providers wins. Cheap, deterministic, matches the pre-#11 behaviour.</item>
+    ///   <item><c>consensusBoost=true</c>: when at least two DISTINCT providers returned the same
+    ///   value, combine their confidences via Noisy-OR — <c>1 − Π(1 − cᵢ)</c>. Captures the
+    ///   "two independent signals are stronger than one" intuition; the source string is
+    ///   replaced with <c>"consensus(p1,p2,...)"</c> so the resolver-trace surfaces the boost.</item>
+    /// </list>
+    /// </summary>
+    internal static List<GenreCandidate> MergeRanked(IEnumerable<GenreCandidate> candidates, bool consensusBoost)
     {
-        var byValue = new Dictionary<string, GenreCandidate>(StringComparer.OrdinalIgnoreCase);
+        if (!consensusBoost)
+        {
+            var byValueSimple = new Dictionary<string, GenreCandidate>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in candidates)
+            {
+                if (byValueSimple.TryGetValue(c.Value, out var existing))
+                {
+                    if (c.Confidence > existing.Confidence) byValueSimple[c.Value] = c;
+                }
+                else
+                {
+                    byValueSimple[c.Value] = c;
+                }
+            }
+            return byValueSimple.Values.OrderByDescending(c => c.Confidence).ToList();
+        }
+
+        // Consensus mode: collect every contributing candidate per value (case-insensitive
+        // group key) so we can both Noisy-OR-combine confidences and list the contributing
+        // sources verbatim in the merged candidate's Source field.
+        var groups = new Dictionary<string, List<GenreCandidate>>(StringComparer.OrdinalIgnoreCase);
         foreach (var c in candidates)
         {
-            if (byValue.TryGetValue(c.Value, out var existing))
+            if (!groups.TryGetValue(c.Value, out var bucket))
             {
-                if (c.Confidence > existing.Confidence) byValue[c.Value] = c;
+                bucket = [];
+                groups[c.Value] = bucket;
+            }
+            bucket.Add(c);
+        }
+
+        var merged = new List<GenreCandidate>(groups.Count);
+        foreach (var (value, group) in groups)
+        {
+            var distinctSources = group
+                .Select(g => g.Source ?? string.Empty)
+                .Where(s => s.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (distinctSources.Count >= 2)
+            {
+                // Noisy-OR over distinct-source max-confidences (a single provider returning
+                // the same value twice via tag aggregation shouldn't compound itself).
+                double noMatchProbability = 1.0;
+                foreach (var src in distinctSources)
+                {
+                    var bestForSrc = group
+                        .Where(g => string.Equals(g.Source, src, StringComparison.OrdinalIgnoreCase))
+                        .Max(g => g.Confidence);
+                    noMatchProbability *= 1.0 - Math.Clamp(bestForSrc, 0.0, 1.0);
+                }
+                var combined = 1.0 - noMatchProbability;
+                merged.Add(new GenreCandidate(
+                    value,
+                    combined,
+                    "consensus(" + string.Join(',', distinctSources.OrderBy(s => s, StringComparer.Ordinal)) + ")"));
             }
             else
             {
-                byValue[c.Value] = c;
+                // Single-source value: just keep the highest-confidence representative; the
+                // boost requires multiple distinct providers by design.
+                merged.Add(group.OrderByDescending(g => g.Confidence).First());
             }
         }
-        return byValue.Values.OrderByDescending(c => c.Confidence).ToList();
+        return merged.OrderByDescending(c => c.Confidence).ToList();
     }
 }

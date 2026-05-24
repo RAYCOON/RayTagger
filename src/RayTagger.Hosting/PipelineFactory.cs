@@ -420,7 +420,7 @@ public sealed class PipelineFactory
             : (IBpmAnalyzer?)null;
 
         var key = essentiaService is not null && IsEssentiaProvider(analysis.Key)
-            ? new EssentiaKeyAnalyzer(essentiaService, loggerFactory.CreateLogger<EssentiaKeyAnalyzer>())
+            ? new EssentiaKeyAnalyzer(essentiaService, analysis.Key, loggerFactory.CreateLogger<EssentiaKeyAnalyzer>())
             : (IKeyAnalyzer?)null;
 
         var energy = essentiaService is not null && IsEssentiaProvider(analysis.Energy)

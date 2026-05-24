@@ -54,6 +54,8 @@ internal static class ExplainHandler
             return ExitCodes.InvalidConfiguration;
         }
 
+        Output.DeprecationRenderer.Render(console, options);
+
         using var loggerFactory = SerilogSetup.Build(options.Logging, verboseOverride: verbose);
 
         var reader = new TagLibTagReader();

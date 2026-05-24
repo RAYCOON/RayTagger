@@ -2,7 +2,7 @@ namespace RayTagger.Core.Models;
 
 /// <summary>
 /// Where a resolved tag value originated. The write stage consults this together with
-/// <c>existing_tags_policy</c> from tagger.yaml — see docs/ARCHITECTURE.md §6.2.
+/// per-dimension <c>existing_confidence</c> from tagger.yaml — see docs/ARCHITECTURE.md §6.2.
 /// </summary>
 /// <remarks>
 /// Invariant: <see cref="Rules"/>-sourced values always overwrite, regardless of policy. Rules are
@@ -54,7 +54,7 @@ public static class ResolvedField
 
 /// <summary>
 /// The in-flight tag state during a pipeline run. Each logical field carries its source so the
-/// write stage can apply <c>existing_tags_policy</c> correctly.
+/// write stage can apply per-dimension <c>existing_confidence</c> correctly.
 /// </summary>
 public sealed record ResolvedTrackTags(
     ResolvedField<string> Genre,

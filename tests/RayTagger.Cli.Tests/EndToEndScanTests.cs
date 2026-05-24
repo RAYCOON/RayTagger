@@ -47,6 +47,21 @@ public sealed class EndToEndScanTests : IDisposable
     }
 
     [Fact]
+    public async Task Scan_with_force_overwrite_flag_parses_and_runs_clean()
+    {
+        // Smoke test for the --force-overwrite flag: the option must parse without errors and
+        // the run must finish with exit 0 on an empty source folder. This guards the CLI wiring;
+        // the underlying merge behaviour (existing_confidence → 0) is covered by TagMergerTests.
+        WriteValidConfig(scanSource: _root);
+        var configPath = Path.Combine(_root, "tagger.yaml");
+
+        var exitCode = await InvokeAsync(
+            "scan", "--config", configPath, "--dry-run", "--force-overwrite");
+
+        exitCode.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Missing_config_file_returns_invalid_configuration_exit_code()
     {
         var exitCode = await InvokeAsync("scan", "--config", Path.Combine(_root, "does-not-exist.yaml"), "--dry-run");

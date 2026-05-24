@@ -29,6 +29,15 @@ internal sealed class ScanCommandOptions
         Description = "Force write mode (overrides config dry-run). Mutually exclusive with --dry-run.",
     };
 
+    public Option<bool> ForceOverwrite { get; } = new("--force-overwrite")
+    {
+        Description = "For this run only, set all per-dimension `existing_confidence` values to 0 " +
+                      "(BPM, Key, Energy, Lookup). Existing tags lose their protection — every " +
+                      "usable analyzer/lookup hit overrides them. Useful for re-tagging an entire " +
+                      "library after a Tagger update without editing tagger.yaml. The config file " +
+                      "is not modified.",
+    };
+
     public Option<bool> Verbose { get; } = new("--verbose", "-v")
     {
         Description = "Enable debug-level logging for this run.",
@@ -40,7 +49,7 @@ internal sealed class ScanCommandOptions
 
         var cmd = new Command("scan", "Scan a directory and report (or write) the tag changes Tagger would make.")
         {
-            Config, Source, DryRun, Write, Verbose,
+            Config, Source, DryRun, Write, ForceOverwrite, Verbose,
         };
         cmd.SetAction(handler);
         return cmd;

@@ -54,6 +54,8 @@ internal static class CalibrateEnergyHandler
             return ExitCodes.InvalidConfiguration;
         }
 
+        Output.DeprecationRenderer.Render(console, options);
+
         var outputPath = outputOverride?.FullName
             ?? options.Analysis.Energy.CalibrationFile;
         if (string.IsNullOrWhiteSpace(outputPath))

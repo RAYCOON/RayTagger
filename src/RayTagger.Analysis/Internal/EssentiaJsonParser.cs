@@ -41,7 +41,12 @@ internal static class EssentiaJsonParser
         // weight is the documented proxy (0..1, mass of beats matching the dominant tempo).
         var bpmConfidence = TryReadDouble(root, "rhythm", "bpm_histogram_first_peak_weight");
 
-        var (keyKey, keyScale, keyStrength) = ReadEdmaKey(root);
+        var (keyKey, keyScale, keyStrength) = ReadKeyProfile(root, "key_edma");
+        // Multi-profile key reads — Essentia always emits all three; we keep them so the analyzer
+        // can vote / fall back when EDMA's strength is weak. See HeuristicGenreClassifier vs
+        // EssentiaKeyAnalyzer for the consumer side.
+        var (keyTempKey, keyTempScale, keyTempStrength) = ReadKeyProfile(root, "key_temperley");
+        var (keyKrumKey, keyKrumScale, keyKrumStrength) = ReadKeyProfile(root, "key_krumhansl");
 
         // Energy descriptors. Frame-level outputs are aggregated by Essentia into
         // {mean, var, min, max, ...} — we read the mean. Track-level scalars (average_loudness,
@@ -67,7 +72,9 @@ internal static class EssentiaJsonParser
             spectralEnergy,
             averageLoudness, spectralFlux, onsetRate, danceability, beatsLoudness,
             spectralCentroidMean, spectralComplexityMean, dynamicComplexity,
-            chordsChangesRate, chordsStrengthMean);
+            chordsChangesRate, chordsStrengthMean,
+            keyTempKey, keyTempScale, keyTempStrength,
+            keyKrumKey, keyKrumScale, keyKrumStrength);
     }
 
     public static EssentiaResult ParseString(string json)
@@ -95,20 +102,28 @@ internal static class EssentiaJsonParser
         return sb.ToString();
     }
 
-    private static (string? Key, string? Scale, double? Strength) ReadEdmaKey(JsonElement root)
+    /// <summary>
+    /// Reads one of Essentia's key-profile objects under <c>tonal.&lt;profileName&gt;</c>. Used
+    /// for <c>key_edma</c> (DJ-tuned profile, primary), <c>key_temperley</c> (better for rock/
+    /// pop/jazz), and <c>key_krumhansl</c> (classical-trained tonal-hierarchy model). All three
+    /// have the same {key, scale, strength} shape; Essentia always emits them in the default
+    /// extractor profile.
+    /// </summary>
+    private static (string? Key, string? Scale, double? Strength) ReadKeyProfile(
+        JsonElement root, string profileName)
     {
         if (!root.TryGetProperty("tonal", out var tonal) || tonal.ValueKind != JsonValueKind.Object)
         {
             return (null, null, null);
         }
-        if (!tonal.TryGetProperty("key_edma", out var edma) || edma.ValueKind != JsonValueKind.Object)
+        if (!tonal.TryGetProperty(profileName, out var profile) || profile.ValueKind != JsonValueKind.Object)
         {
             return (null, null, null);
         }
         return (
-            TryReadString(edma, "key"),
-            TryReadString(edma, "scale"),
-            TryReadScalarNumber(edma, "strength"));
+            TryReadString(profile, "key"),
+            TryReadString(profile, "scale"),
+            TryReadScalarNumber(profile, "strength"));
     }
 
     private static double? TryReadDouble(JsonElement root, string objectKey, string fieldKey)

@@ -258,6 +258,85 @@ public class LookupRunnerTests
         run.Result.GenreCandidates[0].Value.Should().Be("Cached");
     }
 
+    // -------------------------------------------------------------------------------------
+    // #11 Multi-provider consensus-boost — MergeRanked Noisy-OR mode
+    // -------------------------------------------------------------------------------------
+
+    [Fact]
+    public void MergeRanked_without_boost_keeps_highest_confidence_per_value()
+    {
+        // Default behaviour (consensusBoost=false). Two providers both return "House" — the
+        // higher-confidence candidate wins outright. Source is the winning provider verbatim.
+        var input = new[]
+        {
+            new GenreCandidate("House", 0.5, "musicbrainz"),
+            new GenreCandidate("House", 0.7, "discogs"),
+            new GenreCandidate("Techno", 0.4, "lastfm"),
+        };
+
+        var result = LookupRunner.MergeRanked(input, consensusBoost: false);
+
+        result.Should().HaveCount(2);
+        var house = result.Single(c => c.Value == "House");
+        house.Confidence.Should().Be(0.7);
+        house.Source.Should().Be("discogs");
+    }
+
+    [Fact]
+    public void MergeRanked_with_boost_applies_NoisyOR_across_distinct_sources()
+    {
+        // consensusBoost=true. Two providers at 0.5 each → Noisy-OR = 1 − (1−0.5)(1−0.5) = 0.75.
+        // Source is replaced with the consensus-marker so the resolver-trace can surface it.
+        var input = new[]
+        {
+            new GenreCandidate("House", 0.5, "musicbrainz"),
+            new GenreCandidate("House", 0.5, "discogs"),
+        };
+
+        var result = LookupRunner.MergeRanked(input, consensusBoost: true);
+
+        result.Should().ContainSingle();
+        result[0].Confidence.Should().BeApproximately(0.75, 1e-6);
+        result[0].Source.Should().Be("consensus(discogs,musicbrainz)",
+            because: "sources are listed alphabetically for deterministic ordering");
+    }
+
+    [Fact]
+    public void MergeRanked_with_boost_does_not_compound_same_source_twice()
+    {
+        // MusicBrainz can return the same tag twice via different aggregations — the boost
+        // must count distinct PROVIDERS only, not duplicate entries from the same source.
+        var input = new[]
+        {
+            new GenreCandidate("House", 0.5, "musicbrainz"),
+            new GenreCandidate("House", 0.7, "musicbrainz"),
+        };
+
+        var result = LookupRunner.MergeRanked(input, consensusBoost: true);
+
+        result.Should().ContainSingle();
+        result[0].Confidence.Should().Be(0.7,
+            because: "only one distinct provider — boost not applied, highest-confidence wins");
+        result[0].Source.Should().Be("musicbrainz");
+    }
+
+    [Fact]
+    public void MergeRanked_with_boost_handles_three_or_more_providers()
+    {
+        // Three independent providers at 0.5 each. Noisy-OR over the trio:
+        //   1 − (1−0.5)^3 = 0.875
+        var input = new[]
+        {
+            new GenreCandidate("House", 0.5, "musicbrainz"),
+            new GenreCandidate("House", 0.5, "discogs"),
+            new GenreCandidate("House", 0.5, "lastfm"),
+        };
+
+        var result = LookupRunner.MergeRanked(input, consensusBoost: true);
+
+        result[0].Confidence.Should().BeApproximately(0.875, 1e-6);
+    }
+
     private static IMetadataProvider MakeProvider(string name)
     {
         var p = Substitute.For<IMetadataProvider>();

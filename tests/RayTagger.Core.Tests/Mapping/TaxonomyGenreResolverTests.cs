@@ -569,4 +569,43 @@ public class TaxonomyGenreResolverTests
         partial.ClassifierAggregated.Should().Be(80);
         partial.ClassifierTfRaw.Should().Be(60);
     }
+
+    [Fact]
+    public void Per_provider_override_wins_over_generic_Provider_tier()
+    {
+        // Discogs explicitly down-weighted via the per-provider map. Everything else stays on
+        // the generic Provider tier — the override is opt-in, not blanket.
+        var opts = new SourcePriorityOptions
+        {
+            Provider = 100,
+            Providers = new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["discogs"] = 40,
+                ["MUSICBRAINZ"] = 130,   // case-insensitive lookup proved by the loader
+            },
+        };
+
+        TaxonomyGenreResolver.SourcePriority("musicbrainz", opts).Should().Be(130);
+        TaxonomyGenreResolver.SourcePriority("discogs", opts).Should().Be(40);
+        TaxonomyGenreResolver.SourcePriority("lastfm", opts).Should().Be(100,
+            because: "lastfm has no per-provider entry — falls back to generic Provider tier");
+    }
+
+    [Fact]
+    public void Per_provider_override_does_not_affect_classifier_tiers()
+    {
+        // The per-provider map is for provider names only. Classifier sources never look at it —
+        // their tiers are routed by the suffix-pattern checks above the provider fallback.
+        var opts = new SourcePriorityOptions
+        {
+            Providers = new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["classifier:heuristic"] = 999,   // would normally win, but classifier path doesn't read the map
+            },
+        };
+
+        TaxonomyGenreResolver.SourcePriority("classifier:heuristic", opts)
+            .Should().Be(opts.ClassifierHeuristic,
+                because: "classifier suffix routing fires before the provider-map lookup");
+    }
 }

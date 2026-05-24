@@ -28,6 +28,7 @@ internal static class ScanHandler
         var source = parseResult.GetValue(opts.Source);
         var dryRun = parseResult.GetValue(opts.DryRun);
         var write = parseResult.GetValue(opts.Write);
+        var forceOverwrite = parseResult.GetValue(opts.ForceOverwrite);
         var verbose = parseResult.GetValue(opts.Verbose);
 
         var console = AnsiConsole.Console;
@@ -51,7 +52,15 @@ internal static class ScanHandler
             return ExitCodes.InvalidConfiguration;
         }
 
-        ApplyCliOverrides(options, dryRun: dryRun, write: write);
+        DeprecationRenderer.Render(console, options);
+        ApplyCliOverrides(options, dryRun: dryRun, write: write, forceOverwrite: forceOverwrite);
+
+        if (forceOverwrite)
+        {
+            console.MarkupLine(
+                "[yellow]--force-overwrite[/] active: per-dimension existing_confidence forced to 0 for this run. " +
+                "[grey]Every usable analyzer/lookup hit will override existing tags.[/]");
+        }
 
         var services = new ServiceCollection();
         // Register the Serilog-backed factory via delegate so the DI container owns its lifetime
@@ -119,9 +128,16 @@ internal static class ScanHandler
         return (options, rules);
     }
 
-    private static void ApplyCliOverrides(TaggerOptions options, bool dryRun, bool write)
+    private static void ApplyCliOverrides(TaggerOptions options, bool dryRun, bool write, bool forceOverwrite)
     {
         if (dryRun) options.Write.DryRun = true;
         if (write) options.Write.DryRun = false;
+
+        if (forceOverwrite)
+        {
+            // Convenience override for one-off re-tagging: shared with the validate verb via
+            // TaggerOptionsExtensions.ForceOverwriteExistingTags — see there for the full rationale.
+            options.ForceOverwriteExistingTags();
+        }
     }
 }

@@ -6,21 +6,35 @@ namespace RayTagger.Core.Pipeline;
 
 /// <summary>
 /// Merges what we already know (tags on disk) with what analysis and online lookup produced into
-/// a <see cref="ResolvedTrackTags"/> whose field sources reflect <c>existing_tags_policy</c> and
-/// each analyzer's per-dimension <c>min_confidence</c> threshold. See docs/ARCHITECTURE.md §6.2
-/// for the policy matrix.
+/// a <see cref="ResolvedTrackTags"/>. Each output field carries its <see cref="TagFieldSource"/>;
+/// the merge picks between existing/analyzer/lookup based on per-dimension <c>min_confidence</c>
+/// (gates noisy analyzer output) and per-dimension <c>existing_confidence</c> (controls how
+/// readily an existing tag is displaced).
 /// </summary>
 /// <remarks>
+/// <para>
+/// Per-dimension <c>existing_confidence</c> (<see cref="AnalyzerOptions.ExistingConfidence"/>
+/// for BPM/Key/Energy, <see cref="LookupOptions.ExistingConfidence"/> for legacy genre/subgenre)
+/// has replaced the global <c>existing_tags_policy</c>. The legacy enum still works via the
+/// loader migration but emits a deprecation warning. See <c>PolicyEquivalenceTests</c> for the
+/// equivalence proofs and <c>TaggerOptionsLoader.MigrateLegacyPolicyToExistingConfidence</c>
+/// for the mapping rule.
+/// </para>
+/// <para>
 /// Genre / SubGenre resolution has two modes:
 /// <list type="bullet">
 ///   <item>Legacy (<c>resolver</c> or <c>taxonomy</c> null): top-1 <see cref="GenreCandidate"/>
-///   wins blindly, gated only by <c>existing_tags_policy</c>.</item>
+///   wins, gated by <see cref="LegacyLookupMinConfidence"/> (drops noise like LastFm user-tags)
+///   AND the <c>lookupExistingConfidence</c> parameter (controls existing-tag protection).</item>
 ///   <item>Taxonomy-aware (both supplied): whole-word match against the taxonomy with
-///   longest-match-wins, existing-tag protection, and Subgenre splitting — see
-///   <see cref="TaxonomyGenreResolver"/>.</item>
+///   longest-match-wins, existing-tag protection via <see cref="TaxonomyGenreResolver"/>'s
+///   own <c>IsKnownGenre</c> rule. The resolver's protection is binary by design — it does
+///   not consult <c>lookupExistingConfidence</c>. Set <c>lookup.taxonomy_resolution: false</c>
+///   if you need confidence-weighted lookup-vs-existing behaviour for genre.</item>
 /// </list>
 /// Mapping rules run AFTER this merger and can still overwrite the result — rules are
 /// <see cref="TagFieldSource.Rules"/> and always win regardless of policy.
+/// </para>
 /// </remarks>
 public static class TagMerger
 {
@@ -29,11 +43,11 @@ public static class TagMerger
         AnalysisResult analysis,
         LookupResult? lookup,
         AnalysisOptions analysisConfig,
-        ExistingTagsPolicy policy,
         Taxonomy? taxonomy = null,
         TaxonomyGenreResolver? resolver = null,
         IReadOnlyList<ProviderTraceEntry>? providerTrace = null,
-        SourcePriorityOptions? sourcePriority = null)
+        SourcePriorityOptions? sourcePriority = null,
+        double lookupExistingConfidence = 1.0)
     {
         ArgumentNullException.ThrowIfNull(existing);
         ArgumentNullException.ThrowIfNull(analysis);
@@ -44,21 +58,21 @@ public static class TagMerger
             analysis.Bpm.Bpm,
             analysis.Bpm.Confidence,
             analysisConfig.Bpm.MinConfidence,
-            policy);
+            analysisConfig.Bpm.ExistingConfidence);
 
         var key = MergeReference(
             existing.Key,
             analysis.Key.Key,
             analysis.Key.Confidence,
             analysisConfig.Key.MinConfidence,
-            policy);
+            analysisConfig.Key.ExistingConfidence);
 
         var energy = MergeValue(
             existing.Energy,
             analysis.Energy.Energy,
             analysis.Energy.Confidence,
             analysisConfig.Energy.MinConfidence,
-            policy);
+            analysisConfig.Energy.ExistingConfidence);
 
         ResolvedField<string> genre;
         ResolvedField<string> subgenre;
@@ -82,8 +96,8 @@ public static class TagMerger
         {
             var topGenre = lookup?.GenreCandidates.Count > 0 ? lookup.GenreCandidates[0] : null;
             var topSubGenre = lookup?.SubGenreCandidates.Count > 0 ? lookup.SubGenreCandidates[0] : null;
-            genre = MergeLookupString(existing.Genre, topGenre, policy);
-            subgenre = MergeLookupString(existing.SubGenre, topSubGenre, policy);
+            genre = MergeLookupString(existing.Genre, topGenre, lookupExistingConfidence);
+            subgenre = MergeLookupString(existing.SubGenre, topSubGenre, lookupExistingConfidence);
         }
 
         // Mood / SetPosition aren't populated by analyzers or lookup today — they come either
@@ -123,24 +137,44 @@ public static class TagMerger
         return new ResolvedField<string>(proposed, TagFieldSource.Lookup, confidence);
     }
 
+    /// <summary>
+    /// Minimum confidence a lookup candidate must clear in the legacy "top-1 wins" path before it
+    /// can overwrite an existing tag or fill an empty slot. The taxonomy-aware path doesn't need
+    /// this gate because the resolver already filters via whole-word taxonomy matching, but the
+    /// legacy path would otherwise write e.g. a LastFm "favourite"/"seen-live" user-tag with
+    /// confidence ~0.05 over a curated value. 0.30 reflects "any meaningful signal" without
+    /// blocking moderate-confidence provider hits.
+    /// </summary>
+    public const double LegacyLookupMinConfidence = 0.30;
+
     private static ResolvedField<string> MergeLookupString(
         string? existing,
         GenreCandidate? lookupCandidate,
-        ExistingTagsPolicy policy)
+        double existingConfidence)
     {
-        var lookupUsable = lookupCandidate is not null && !string.IsNullOrWhiteSpace(lookupCandidate.Value);
+        var lookupUsable = lookupCandidate is not null
+            && !string.IsNullOrWhiteSpace(lookupCandidate.Value)
+            && lookupCandidate.Confidence >= LegacyLookupMinConfidence;
 
         if (!lookupUsable)
         {
-            return new ResolvedField<string>(existing, TagFieldSource.Existing, existing is null ? 0 : 1);
+            return new ResolvedField<string>(existing, TagFieldSource.Existing, existing is null ? 0 : existingConfidence);
         }
 
-        if (policy == ExistingTagsPolicy.AlwaysOverwrite || string.IsNullOrEmpty(existing))
+        if (string.IsNullOrEmpty(existing))
         {
+            // Empty slot: fill regardless of existing_confidence. The user can't have "wanted to
+            // protect" a value that wasn't there.
             return new ResolvedField<string>(lookupCandidate!.Value, TagFieldSource.Lookup, lookupCandidate.Confidence);
         }
 
-        return new ResolvedField<string>(existing, TagFieldSource.Existing, 1);
+        // Confidence-weighted choice: lookup candidate has to beat existing_confidence to
+        // overwrite. Default existing_confidence=1.0 reproduces the classic "existing always
+        // wins" behaviour (lookup confidences typically sit in [0,1] and rarely reach exactly
+        // 1.0). Setting it to 0 lets every usable candidate overwrite.
+        return lookupCandidate!.Confidence > existingConfidence
+            ? new ResolvedField<string>(lookupCandidate.Value, TagFieldSource.Lookup, lookupCandidate.Confidence)
+            : new ResolvedField<string>(existing, TagFieldSource.Existing, existingConfidence);
     }
 
     /// <summary>Merge a nullable-struct field (BPM, Energy).</summary>
@@ -149,22 +183,27 @@ public static class TagMerger
         T? analyzed,
         double confidence,
         double minConfidence,
-        ExistingTagsPolicy policy) where T : struct
+        double existingConfidence) where T : struct
     {
         var analysisUsable = analyzed.HasValue && confidence >= minConfidence;
 
         if (!analysisUsable)
         {
-            return new ResolvedValueField<T>(existing, TagFieldSource.Existing, existing.HasValue ? 1 : 0);
+            return new ResolvedValueField<T>(existing, TagFieldSource.Existing, existing.HasValue ? existingConfidence : 0);
         }
 
-        if (policy == ExistingTagsPolicy.AlwaysOverwrite || !existing.HasValue)
+        if (!existing.HasValue)
         {
             return new ResolvedValueField<T>(analyzed, TagFieldSource.Analysis, confidence);
         }
 
-        // skip_if_present / fill_only_empty: existing wins when present.
-        return new ResolvedValueField<T>(existing, TagFieldSource.Existing, 1);
+        // Confidence-weighted choice: analyzer wins iff its confidence strictly beats the
+        // existing_confidence floor. Default existing_confidence=1.0 keeps existing in place
+        // (analyzer confidences rarely hit 1.0); setting it to 0 lets every usable analyzer
+        // hit overwrite (per-dimension always-overwrite).
+        return confidence > existingConfidence
+            ? new ResolvedValueField<T>(analyzed, TagFieldSource.Analysis, confidence)
+            : new ResolvedValueField<T>(existing, TagFieldSource.Existing, existingConfidence);
     }
 
     /// <summary>Merge a nullable-reference field (Key, Genre, …).</summary>
@@ -173,20 +212,22 @@ public static class TagMerger
         T? analyzed,
         double confidence,
         double minConfidence,
-        ExistingTagsPolicy policy) where T : class
+        double existingConfidence) where T : class
     {
         var analysisUsable = analyzed is not null && confidence >= minConfidence;
 
         if (!analysisUsable)
         {
-            return new ResolvedField<T>(existing, TagFieldSource.Existing, existing is null ? 0 : 1);
+            return new ResolvedField<T>(existing, TagFieldSource.Existing, existing is null ? 0 : existingConfidence);
         }
 
-        if (policy == ExistingTagsPolicy.AlwaysOverwrite || existing is null)
+        if (existing is null)
         {
             return new ResolvedField<T>(analyzed, TagFieldSource.Analysis, confidence);
         }
 
-        return new ResolvedField<T>(existing, TagFieldSource.Existing, 1);
+        return confidence > existingConfidence
+            ? new ResolvedField<T>(analyzed, TagFieldSource.Analysis, confidence)
+            : new ResolvedField<T>(existing, TagFieldSource.Existing, existingConfidence);
     }
 }

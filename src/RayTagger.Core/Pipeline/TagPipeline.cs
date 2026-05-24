@@ -12,8 +12,8 @@ namespace RayTagger.Core.Pipeline;
 /// <list type="number">
 ///   <item>Read existing tags via <see cref="ITagReaderAdapter"/>.</item>
 ///   <item>Run configured analyzers via <see cref="IAnalysisRunner"/>.</item>
-///   <item>Merge existing + analysis into <see cref="ResolvedTrackTags"/> per
-///         <c>existing_tags_policy</c> and per-dimension <c>min_confidence</c>.</item>
+///   <item>Merge existing + analysis into <see cref="ResolvedTrackTags"/> per per-dimension
+///         <c>min_confidence</c> and <c>existing_confidence</c>.</item>
 ///   <item>(Phase 3) apply mapping rules.</item>
 ///   <item>(Phase 4) overlay online lookup results.</item>
 ///   <item>Optionally write — delegated to <see cref="ITagWriterAdapter"/> when not in dry-run.</item>
@@ -286,11 +286,11 @@ public sealed class TagPipeline : ITagPipeline
             analysis,
             lookup,
             options.Analysis,
-            options.Read.ExistingTagsPolicy,
             resolverActive ? options.Taxonomy.Loaded : null,
             resolverActive ? _genreResolver : null,
             providerTrace,
-            options.Mapping.SourcePriority);
+            options.Mapping.SourcePriority,
+            options.Lookup.ExistingConfidence);
         if (classifierTrace is not null)
         {
             resolved = resolved with { ClassifierTrace = classifierTrace };
@@ -311,6 +311,42 @@ public sealed class TagPipeline : ITagPipeline
             _logger.LogWarning(ex, "Mapping rules failed for {Path}: {Message}", file.Path, ex.Message);
             errors.Add(new StageError("Map", ex.Message));
             // Continue without rule-derived overrides — the resolved tags are still valid.
+        }
+
+        // #15 BPM-Re-Fold: when the initial analyzer pass ran without a genre hint (because the
+        // file had no existing Genre tag), the resulting BPM is the raw Essentia value with no
+        // half/double-time correction. Once lookup AND mapping rules have settled the genre,
+        // retry the fold against that genre's tempo range — recovers the typical "DnB at 86 BPM
+        // raw → 172 corrected" case for tracks that arrived without a genre tag. Runs AFTER
+        // mapping rules so a rule-supplied genre can drive the fold too (Source = Rules path).
+        // Only fires when:
+        //   - existing.Genre was empty (analyzer used no range, so analysis.Bpm.Bpm is raw)
+        //   - the resolved Genre comes from Lookup / Rules (NOT Existing — that path is already
+        //     handled by the analyzer's initial fold)
+        //   - there's an actual range configured for the resolved genre
+        if (string.IsNullOrWhiteSpace(existing.Genre)
+            && !string.IsNullOrWhiteSpace(resolved.Genre.Value)
+            && resolved.Genre.Source != TagFieldSource.Existing
+            && resolved.Bpm.Value is double rawBpm
+            && resolved.Bpm.Source == TagFieldSource.Analysis
+            && options.Analysis.Bpm.TempoRangesByGenre.TryGetValue(resolved.Genre.Value, out var lookupRange))
+        {
+            var refolded = RayTagger.Core.Analysis.BpmFolder.Apply(
+                rawBpm,
+                resolved.Bpm.Confidence,
+                lookupRange,
+                options.Analysis.Bpm.SnapTolerancePercent,
+                options.Analysis.Bpm.SnapStep);
+            if (refolded.Bpm is double refoldedValue && !refoldedValue.Equals(rawBpm))
+            {
+                _logger.LogDebug(
+                    "BPM re-fold for {Path}: raw {Raw:F2} → {Folded:F2} via resolved-genre {Genre} range {Range}",
+                    file.Path, rawBpm, refoldedValue, resolved.Genre.Value, lookupRange);
+                resolved = resolved with
+                {
+                    Bpm = new ResolvedValueField<double>(refoldedValue, TagFieldSource.Analysis, refolded.Confidence),
+                };
+            }
         }
 
         var status = PipelineStatus.Unchanged;
@@ -366,10 +402,21 @@ public sealed class TagPipeline : ITagPipeline
         var pipelineSnapFired = false;
         if (resolved.Bpm.Value is double finalBpm)
         {
+            // Per-genre snap-step override: when the resolved genre has an entry in
+            // SnapStepByGenre, use it instead of the global SnapStep. Same normalisation as
+            // TempoRangesByGenre — the resolved Genre value is what we look up here.
+            var snapStep = options.Analysis.Bpm.SnapStep;
+            if (!string.IsNullOrWhiteSpace(resolved.Genre.Value)
+                && options.Analysis.Bpm.SnapStepByGenre.TryGetValue(resolved.Genre.Value, out var perGenreStep)
+                && perGenreStep > 0)
+            {
+                snapStep = perGenreStep;
+            }
+
             var snapped = RayTagger.Core.Analysis.BpmSnapper.Snap(
                 finalBpm,
                 options.Analysis.Bpm.SnapTolerancePercent,
-                options.Analysis.Bpm.SnapStep,
+                snapStep,
                 out pipelineSnapFired);
             if (pipelineSnapFired)
             {
@@ -383,6 +430,26 @@ public sealed class TagPipeline : ITagPipeline
         var bpmWasSnapped = pipelineSnapFired || (analyzerProducedFinal && analysis.Bpm.WasSnapped);
         var bpmIsForcedFallback = analyzerProducedFinal && analysis.Bpm.IsForcedFallback;
 
+        // BPM-Cross-Check: when both an existing tag and a min-confidence-cleared analyzer BPM
+        // are available, report the relative drift between them. Pure diagnostic — doesn't
+        // influence which value wins (that's existing_confidence's job). Surfaces silent drift
+        // between Mixed-In-Key's tag and Essentia's detection: 2 % is the rule-of-thumb where
+        // a track starts beating against a mix.
+        double? bpmCrossCheckDelta = null;
+        if (existing.Bpm is double existingBpm
+            && analysis.Bpm.Bpm is double analyzerBpm
+            && analysis.Bpm.Confidence >= options.Analysis.Bpm.MinConfidence
+            && existingBpm > 0)
+        {
+            bpmCrossCheckDelta = Math.Abs(existingBpm - analyzerBpm) / existingBpm;
+            if (bpmCrossCheckDelta > 0.02)
+            {
+                _logger.LogWarning(
+                    "BPM drift {DriftPercent:P1} for {Path}: existing={Existing} analyzer={Analyzer}",
+                    bpmCrossCheckDelta, file.Path, existingBpm, analyzerBpm);
+            }
+        }
+
         return new PipelineOutcome(
             file,
             resolved,
@@ -393,7 +460,8 @@ public sealed class TagPipeline : ITagPipeline
             PreMapResolved: preMapResolved,
             ExistingAtScan: existing,
             BpmWasSnapped: bpmWasSnapped,
-            BpmIsForcedFallback: bpmIsForcedFallback);
+            BpmIsForcedFallback: bpmIsForcedFallback,
+            BpmCrossCheckDelta: bpmCrossCheckDelta);
     }
 
     private static bool HasAnyNonExistingField(ResolvedTrackTags resolved) =>

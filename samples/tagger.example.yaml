@@ -27,12 +27,12 @@ scan:
   parallelism: 0                    # concurrent workers; 0 = auto (Environment.ProcessorCount), 1 = sequential
 
 # --- 2. Reading existing tags ------------------------------------------------
-read:
-  # How to treat existing values on a track.
-  #   skip_if_present  — never overwrite a non-empty tag (safest)
-  #   fill_only_empty  — alias of skip_if_present
-  #   always_overwrite — replace whatever's there
-  existing_tags_policy: skip_if_present
+# Existing-tag protection is now per-dimension via `existing_confidence` knobs (see below
+# under analysis.* and lookup.*). The historical `read.existing_tags_policy` key has been
+# removed; if a legacy config still has it, the loader migrates the value to the equivalent
+# per-dimension defaults and prints a deprecation warning. See ARCHITECTURE.md §6.2 for the
+# migration table.
+read: {}
 
 # --- 3. Audio analysis (offline, local binaries on PATH) ---------------------
 # BPM, key and energy all run through a single Essentia
@@ -44,6 +44,16 @@ read:
 #
 # Each analyzer emits a confidence in [0,1]. Values below `min_confidence`
 # are dropped (existing tag preserved). Set to 0 to always trust the analyzer.
+#
+# `existing_confidence` (per dimension, [0,1]) controls how easily an existing
+# tag is overridden:
+#   1.0  default — existing always wins (classic skip-if-present behaviour)
+#   0.0  every usable analyzer hit overrides
+#   x    analyzer wins only when its own confidence > x
+#
+# CLI convenience: `tagger scan --force-overwrite` zeroes every existing_confidence
+# for one run (BPM, Key, Energy, Lookup) without editing this file. Use when
+# re-tagging an entire library after a Tagger update or to test new defaults.
 #
 # Note on timeouts: bpm/key/energy share ONE Essentia run, so the effective
 # timeout is the MAX of the three values. Setting bpm.timeout_seconds=30 while
@@ -61,6 +71,17 @@ analysis:
     # snap_step 0.5 also catches half-BPM tracks (173.48 → 173.5); use 1.0 for integer-only.
     snap_tolerance_percent: 0.12
     snap_step: 0.5
+    # Per-genre snap-step overrides. Looked up case-insensitively against the resolved genre
+    # (same normalisation as tempo_ranges_by_genre). Useful when one genre's tempos are
+    # inherently coarser than the rest — e.g. Pop/Rock at integers, DnB needing finer
+    # resolution (174.5 vs 174 matters for harmonic mixing). Empty = global snap_step is used
+    # for every genre.
+    snap_step_by_genre: {}
+    # Example:
+    # snap_step_by_genre:
+    #   Drum and Bass: 0.25
+    #   Rock:          1.0
+    #   Pop:           1.0
 
     # Per-genre BPM ranges. Essentia ALWAYS runs with its built-in default tempo range
     # (40-208) — these ranges are applied AFTER detection by a fold algorithm:
@@ -106,6 +127,17 @@ analysis:
     # spec; TXXX:CAMELOTKEY is written in Camelot. Both are written when key
     # analysis is enabled — this option only controls CLI/log display.
     display_notation: camelot        # camelot | standard
+    # Which of Essentia's three key profiles to use. Essentia always emits all three (free).
+    #   edma                  — DJ-tuned, strongest on EDM/Beatport (default, backward-compat)
+    #   temperley             — better than EDMA on rock / pop / jazz
+    #   krumhansl             — classical-trained tonal-hierarchy model
+    #   edma_with_fallback    — EDMA when strength ≥ edma_with_fallback_threshold (default 0.5),
+    #                            otherwise the stronger of Temperley / Krumhansl
+    #   ensemble_voting       — pick the key two of three profiles agree on; tiebreak by strength.
+    #                            Recommended for mixed libraries — the 1795-track backtest showed
+    #                            EDMA-only at 37 % exact match across non-EDM material.
+    profile: edma
+    edma_with_fallback_threshold: 0.5
   energy:
     enabled: true
     provider: essentia               # five-feature composite (flux/beats/onset/dance/loudness)
@@ -123,12 +155,23 @@ analysis:
     timeout_seconds: 30
     min_confidence: 0.0              # fingerprint is binary — present or not
 
-  # Opt-in audio-based genre classification. See docs/PLAN_GENRE_CLASSIFICATION.md.
-  # All flags default to false — leave them off to preserve byte-identical pipeline behaviour.
+  # Audio-based genre classification. See docs/PLAN_GENRE_CLASSIFICATION.md.
+  # Heuristic is ON by default (reuses existing Essentia run, near-zero extra cost).
+  # TF models default to off — pip install essentia-tensorflow and flip the desired model
+  # to true to opt in.
   genre_classifier:
     heuristic:
-      enabled: false                 # tier-3 pure-rule scoring over DSP descriptors
+      # tier-3 pure-rule scoring over DSP descriptors — reuses existing Essentia run, no extra
+      # subprocess cost. EDM-FOCUSED 8-genre lineup: House / Techno / Trance / Drum and Bass /
+      # Dubstep / Hip Hop / Ambient / Downtempo. Rock/Pop/Jazz/R&B/Soul/Funk/Reggae/Classical
+      # have no DSP signature here — use the mtg_jamendo TF model below if your library has
+      # non-EDM material.
+      enabled: true
       min_confidence: 0.55           # below this no candidate is emitted
+      # How to combine the 7 per-feature scores. The 1795-track backtest showed the heuristic
+      # is permissive (Precision 0.48) at arithmetic_mean — geometric_mean penalises weak
+      # features more strongly. When switching, re-tune min_confidence downward (try 0.40).
+      scoring_mode: arithmetic_mean  # arithmetic_mean | geometric_mean
     tensorflow:
       # Each model is independently toggleable AND has its own confidence floor — tune per
       # model to match how much trust you give it. Defaults differ on purpose; see comments.
@@ -140,6 +183,14 @@ analysis:
         enabled: false               # 87-class Jamendo tagger — Rock/Pop/Soul/Jazz/Reggae/...
         min_confidence: 0.50         # lower floor — wider vocabulary, 0.5 already represents
                                      # strong confidence across 87 classes
+        # Aggregation defaults ON for mtg_jamendo (same diffuse-output rationale as discogs-effnet):
+        # 87 sibling classes spread mass over parents like Rock/Pop, so the parent-sum is more
+        # robust than raw top-1. Threshold 0.30 (slightly higher than discogs's 0.25) because
+        # Jamendo's parent classes are coarser — a clear winner should clear a wider bar.
+        aggregate_top_k: true
+        aggregate_per_candidate_floor: 0.02
+        aggregate_min_total: 0.30
+        aggregate_fallback_on_diffuse: true
       discogs_effnet:
         enabled: false               # 400-class fine-grained Discogs styles — subgenre detection
         min_confidence: 0.50         # lower floor — only source of subgenres in the pipeline
@@ -206,6 +257,26 @@ lookup:
   # has credentials configured — it deliberately ignores `enabled` and this flag.
   taxonomy_resolution: true
 
+  # Combine candidates that multiple providers independently returned via Noisy-OR:
+  # `c_combined = 1 − Π(1 − cᵢ)`. Captures the statistical insight that two independent
+  # signals at 0.5 each beat a single signal at 0.8 (combined = 0.75 vs 0.80 is close;
+  # at three providers each at 0.5 the combined is 0.875). Only fires when at least
+  # two DISTINCT providers (not duplicate entries from the same source) agree on a value.
+  # Source of combined candidates is `consensus(provider1,provider2,...)`.
+  # Default off — turn on after running `tagger validate` and confirming the Resolver-
+  # Trace section shows overlapping providers on your library.
+  consensus_boost: false
+
+  # Existing-tag confidence floor for the LEGACY lookup-merge path (only fires when
+  # taxonomy_resolution=false or no taxonomy is loaded). Same semantics as the per-analyzer
+  # `existing_confidence` floors under `analysis.*`:
+  #   1.0 (default) — existing genre always wins (classic skip-if-present)
+  #   0.0           — any usable lookup candidate overrides existing
+  #   x             — lookup candidate's confidence must clear x to win
+  # Has no effect on the taxonomy-resolver path (which uses taxonomy-membership protection
+  # instead, a binary by-design rule).
+  existing_confidence: 1.0
+
   # Per-provider minimum interval between outbound requests (milliseconds). Defaults match the
   # published policies as of late 2025 — leave alone unless you have a reason to deviate:
   #   AcoustID    3 req/s per key       → 350 ms keeps us under (1000 / 3 ≈ 333 ms + headroom)
@@ -242,8 +313,19 @@ mapping:
   #
   # Common tweak: bump classifier_heuristic above classifier_tf_raw when you
   # trust the hand-tuned rules more than a raw TF prediction.
+  #
+  # Per-provider overrides (`providers:`) let you tune individual sources without
+  # touching the generic `provider:` tier — useful when one provider's quality
+  # on your library differs from the others (run `tagger validate` and check
+  # the Resolver-Trace per-source win/loss table to decide). Names are
+  # case-insensitive and must match the provider source string verbatim:
+  # acoustid / musicbrainz / discogs / lastfm.
   source_priority:
     provider:                       100
+    providers: {}                          # per-name overrides — example:
+                                           # providers:
+                                           #   musicbrainz: 110     # trust most
+                                           #   lastfm:       40     # below classifier_heuristic — last-resort
     classifier_aggregated:           80
     classifier_aggregated_fallback:  70
     classifier_tf_raw:               60
@@ -260,17 +342,22 @@ write:
   # format. Format prefixes: ID3 (MP3/AIFF), VORBIS (FLAC).
   #
   # User-overridable rows (the TXXX descriptions and Vorbis field names):
-  #   subgenre, camelot, energy
+  #   subgenre, camelot, energy, mood, set_position
   # Standard-frame rows (genre/bpm/key — TCON/TBPM/TKEY/INITIALKEY/GENRE/BPM)
   # are listed for documentation; the writer always uses the canonical frame
   # per spec. Listing a non-canonical standard frame yields a validation error.
+  #
+  # Mood + set_position are populated by mapping-rule `set:` blocks today —
+  # no audio analyzer feeds them. See docs/FIELD_RESOLUTION.md §2.6 / §2.7.
   tag_fields:
-    genre:     ["ID3:TCON",              "VORBIS:GENRE"]
-    subgenre:  ["ID3:TXXX:SUBGENRE",     "VORBIS:SUBGENRE"]
-    bpm:       ["ID3:TBPM",              "VORBIS:BPM"]
-    key:       ["ID3:TKEY",              "VORBIS:INITIALKEY"]
-    camelot:   ["ID3:TXXX:CAMELOTKEY",   "VORBIS:CAMELOTKEY"]
-    energy:    ["ID3:TXXX:ENERGYLEVEL",  "VORBIS:ENERGYLEVEL"]
+    genre:        ["ID3:TCON",              "VORBIS:GENRE"]
+    subgenre:     ["ID3:TXXX:SUBGENRE",     "VORBIS:SUBGENRE"]
+    bpm:          ["ID3:TBPM",              "VORBIS:BPM"]
+    key:          ["ID3:TKEY",              "VORBIS:INITIALKEY"]
+    camelot:      ["ID3:TXXX:CAMELOTKEY",   "VORBIS:CAMELOTKEY"]
+    energy:       ["ID3:TXXX:ENERGYLEVEL",  "VORBIS:ENERGYLEVEL"]
+    mood:         ["ID3:TXXX:MOOD",         "VORBIS:MOOD"]
+    set_position: ["ID3:TXXX:SETPOSITION",  "VORBIS:SETPOSITION"]
 
 # --- 7. Sort (optional) ------------------------------------------------------
 sort:

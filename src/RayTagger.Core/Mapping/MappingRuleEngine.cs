@@ -13,7 +13,7 @@ namespace RayTagger.Core.Mapping;
 /// </summary>
 /// <remarks>
 /// All <c>set:</c> writes stamp the affected fields with <see cref="TagFieldSource.Rules"/>. That
-/// source wins over <c>existing_tags_policy: skip_if_present</c> per the invariant documented in
+/// source wins over per-dimension <c>existing_confidence</c> per the invariant documented in
 /// <see cref="TagFieldSource"/> — rules express the user's explicit declarative intent.
 /// </remarks>
 public sealed class MappingRuleEngine : IMappingRuleEngine

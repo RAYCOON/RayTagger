@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using RayTagger.Core.IO;
 using RayTagger.Core.Mapping;
 using YamlDotNet.Core;
@@ -77,6 +78,12 @@ public static class TaggerOptionsLoader
                 errors);
         }
 
+        // Detect the legacy `existing_tags_policy` key BEFORE deserialization. The key has been
+        // removed from the POCO (in favour of per-dimension existing_confidence), so we strip
+        // the line from the raw YAML to avoid YamlDotNet's strict unknown-property error and
+        // capture the value separately for the migration step.
+        var legacyPolicyValue = ExtractAndStripLegacyPolicy(ref substitutedYaml);
+
         TaggerOptions options;
         try
         {
@@ -102,8 +109,97 @@ public static class TaggerOptionsLoader
         LoadTaxonomyIfConfigured(options, sourceDescription);
         LoadEnergyCalibrationIfConfigured(options, sourceDescription);
         NormaliseDictionaryComparers(options);
+        MigrateLegacyPolicyToExistingConfidence(options, legacyPolicyValue);
 
         return options;
+    }
+
+    /// <summary>
+    /// Captures the value of a legacy <c>read.existing_tags_policy</c> entry and strips the line
+    /// from the YAML so the (now policy-free) <see cref="TaggerOptions"/> POCO doesn't reject it
+    /// as an unknown property. Returns the raw value (e.g. <c>"always_overwrite"</c>) or
+    /// <c>null</c> when the key is absent.
+    /// </summary>
+    /// <remarks>
+    /// The regex matches mapping entries only — leading whitespace then the literal
+    /// <c>existing_tags_policy:</c> then the value. Commented-out lines (<c>#&#160;...</c>) don't
+    /// trigger because <c>#</c> isn't whitespace. Multi-line/flow-style values aren't supported
+    /// — the legacy YAML only ever set this as a single scalar token so the simple form covers
+    /// every real-world config.
+    /// </remarks>
+    private static readonly Regex LegacyPolicyKeyRegex = new(
+        @"^([ \t]*)existing_tags_policy[ \t]*:[ \t]*([^\s#]+)[ \t]*(#[^\r\n]*)?\r?$",
+        RegexOptions.Multiline | RegexOptions.Compiled);
+
+    private static string? ExtractAndStripLegacyPolicy(ref string yaml)
+    {
+        var match = LegacyPolicyKeyRegex.Match(yaml);
+        if (!match.Success) return null;
+
+        var value = match.Groups[2].Value;
+        // Replace the entire matched line with an empty mapping-friendly placeholder. We can't
+        // just delete the line because if `read:` had ONLY this key, the parent would become an
+        // empty mapping (`read:\n`) — YamlDotNet accepts that, so we just blank the line.
+        yaml = LegacyPolicyKeyRegex.Replace(yaml, string.Empty, 1);
+        return value;
+    }
+
+    /// <summary>
+    /// Migrates a user's <c>read.existing_tags_policy</c> setting (now stripped from the YAML
+    /// before deserialization) to the equivalent per-dimension <c>existing_confidence</c> values
+    /// and records a deprecation warning.
+    /// </summary>
+    /// <remarks>
+    /// Mapping (proven by <c>PolicyEquivalenceTests</c> in the Core.Tests assembly):
+    /// <list type="bullet">
+    ///   <item><c>always_overwrite</c> → all <c>existing_confidence = 0.0</c>.</item>
+    ///   <item><c>skip_if_present</c> / <c>fill_only_empty</c> → no change (defaults already
+    ///   reproduce the legacy behaviour, just emit the warning).</item>
+    ///   <item>Anything else → unknown-value warning, no migration.</item>
+    /// </list>
+    /// When the user has ALSO set explicit per-dimension <c>existing_confidence</c> values, the
+    /// policy still wins — preserving the previous "policy is the master switch" contract.
+    /// Users who want per-dimension overrides should drop the policy key entirely.
+    /// </remarks>
+    private static void MigrateLegacyPolicyToExistingConfidence(TaggerOptions options, string? legacyValue)
+    {
+        if (legacyValue is null)
+        {
+            // No legacy key in the YAML — nothing to migrate, no warning to emit.
+            return;
+        }
+
+        // Lowercase via culture-invariant ToUpperInvariant + lower mapping would be the safe
+        // option per CA1308, but YAML enum tokens are ASCII-only — the equality check below uses
+        // OrdinalIgnoreCase to sidestep both the culture and the casing concerns at once.
+        switch (legacyValue.Trim())
+        {
+            case var s when string.Equals(s, "always_overwrite", StringComparison.OrdinalIgnoreCase):
+                options.Analysis.Bpm.ExistingConfidence = 0.0;
+                options.Analysis.Key.ExistingConfidence = 0.0;
+                options.Analysis.Energy.ExistingConfidence = 0.0;
+                options.Lookup.ExistingConfidence = 0.0;
+                options.Deprecations.Add(
+                    "`read.existing_tags_policy: always_overwrite` is deprecated and has been " +
+                    "removed in favour of per-dimension `existing_confidence`. Migrated to " +
+                    "`analysis.{bpm,key,energy}.existing_confidence: 0.0` and " +
+                    "`lookup.existing_confidence: 0.0`. Remove the `read.existing_tags_policy` " +
+                    "key from tagger.yaml.");
+                break;
+            case var s when string.Equals(s, "skip_if_present", StringComparison.OrdinalIgnoreCase)
+                          || string.Equals(s, "fill_only_empty", StringComparison.OrdinalIgnoreCase):
+                options.Deprecations.Add(
+                    $"`read.existing_tags_policy: {legacyValue}` is deprecated and has been " +
+                    "removed. The same behaviour is the default " +
+                    "(`existing_confidence: 1.0` across all dimensions). Remove the key from " +
+                    "tagger.yaml.");
+                break;
+            default:
+                options.Deprecations.Add(
+                    $"`read.existing_tags_policy: {legacyValue}` was not recognised. The key " +
+                    "has been removed; use per-dimension `existing_confidence` instead.");
+                break;
+        }
     }
 
     /// <summary>
@@ -117,6 +213,12 @@ public static class TaggerOptionsLoader
     {
         options.Analysis.Bpm.TempoRangesByGenre = new Dictionary<string, RayTagger.Core.Models.BpmTempoRange>(
             options.Analysis.Bpm.TempoRangesByGenre,
+            StringComparer.OrdinalIgnoreCase);
+        options.Analysis.Bpm.SnapStepByGenre = new Dictionary<string, double>(
+            options.Analysis.Bpm.SnapStepByGenre,
+            StringComparer.OrdinalIgnoreCase);
+        options.Mapping.SourcePriority.Providers = new Dictionary<string, int>(
+            options.Mapping.SourcePriority.Providers,
             StringComparer.OrdinalIgnoreCase);
     }
 

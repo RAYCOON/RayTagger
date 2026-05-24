@@ -34,18 +34,37 @@ A scan run is a directed pipeline. Each stage is a small unit with a single resp
    └────────┬─────────┘
             ▼
    ┌──────────────────┐
-   │ 5. Map           │  Apply mapping rules in order. Resolve final
+   │ 5. GenreClassify │  Optional. Audio-based IGenreClassifier voters
+   │   (opt.)         │  (heuristic + 3 TF models) append candidates to
+   │                  │  LookupResult.GenreCandidates. See §3 + plan doc.
+   └────────┬─────────┘
+            ▼
+   ┌──────────────────┐
+   │ 6. Merge         │  TagMerger consolidates Existing/Analysis/Lookup
+   │                  │  per field, applying per-dimension min_confidence
+   │                  │  + existing_confidence. Genre/SubGenre routed
+   │                  │  through TaxonomyGenreResolver.
+   └────────┬─────────┘
+            ▼
+   ┌──────────────────┐
+   │ 7. Map           │  Apply mapping rules in order. Resolve final
    │                  │  Genre, SubGenre and any rule-set extra tags.
    └────────┬─────────┘
             ▼
    ┌──────────────────┐
-   │ 6. Write tags    │  Resolve logical fields → format-specific frames,
+   │ 8. Write tags    │  Resolve logical fields → format-specific frames,
    │                  │  back up file, write via TagLib#.
    └────────┬─────────┘
             ▼
    ┌──────────────────┐
-   │ 7. Sort (opt.)   │  Move file to destination per template; handle
+   │ 9. Sort (opt.)   │  Move file to destination per template; handle
    │                  │  collisions per config (rename / skip / overwrite).
+   └────────┬─────────┘
+            ▼
+   ┌──────────────────┐
+   │ 10. BPM snap     │  Post-write final-grid snap on the resolved BPM
+   │     (post)       │  for cache/log consistency (does not re-trigger
+   │                  │  a tag write). See §3 fold algorithm.
    └──────────────────┘
 ```
 
@@ -70,7 +89,15 @@ public sealed record TrackTags(
     string? Title, string? Artist, string? AlbumArtist, string? Album,
     int? Year, string? Genre, string? SubGenre,
     double? Bpm, MusicalKey? Key, int? Energy,
+    string? Mood, string? SetPosition,
+    double? DurationSeconds,
     IReadOnlyDictionary<string, string> Custom);
+
+// Mood / SetPosition are *passthrough only* in the current pipeline — no analyzer
+// or lookup provider populates them. They round-trip from the existing tag on
+// disk and can be overridden via mapping-rule `set: { tag.mood: ... }` actions.
+// DurationSeconds is read from TagLib# `Properties.Duration`, used internally
+// for the AcoustID lookup query, and never written back to any tag frame.
 
 public sealed record MusicalKey(string Standard, string Camelot);  // e.g. ("Am", "8A")
 
@@ -106,6 +133,8 @@ public sealed record ResolvedTrackTags(
     ResolvedField<double>      Bpm,
     ResolvedField<MusicalKey>  Key,
     ResolvedField<int>         Energy,
+    ResolvedField<string>      Mood,
+    ResolvedField<string>      SetPosition,
     IReadOnlyDictionary<string, ResolvedField<string>> Custom);
 
 public sealed record PipelineOutcome(
@@ -287,7 +316,7 @@ Multiple sibling keys inside `when` are implicit `all_of`.
 | `add_keyword`    | Append to a list-like tag (e.g. comments / custom).                   |
 | `tag.<name>`     | Write a custom tag field (e.g. `tag.mood: "Driving"`).                |
 
-`set` always marks the affected fields with source `Rules` — see §6.2 on how this interacts with `existing_tags_policy`.
+`set` always marks the affected fields with source `Rules` — see §6.2 on how this interacts with the per-dimension `existing_confidence` knobs (spoiler: `Rules` always wins).
 
 ### 5.4 Evaluation
 
@@ -321,7 +350,15 @@ Multiple sibling keys inside `when` are implicit `all_of`.
 | Key (standard) | `TKEY`               | `INITIALKEY`     | `TKEY`                  |
 | Camelot Key    | `TXXX:CAMELOTKEY`    | `CAMELOTKEY`     | `TXXX:CAMELOTKEY`       |
 | Energy (1-10)  | `TXXX:ENERGYLEVEL`   | `ENERGYLEVEL`    | `TXXX:ENERGYLEVEL`      |
+| Mood           | `TXXX:MOOD`          | `MOOD`           | `TXXX:MOOD`             |
+| Set Position   | `TXXX:SETPOSITION`   | `SETPOSITION`    | `TXXX:SETPOSITION`      |
 | Comment        | `COMM`               | `COMMENT`        | `COMM`                  |
+
+**Mood / Set Position are round-trip-only today.** No analyzer or lookup
+provider populates them — the writer preserves what was already on disk and
+honours `set: { tag.mood: ... }` / `set: { tag.set_position: ... }` rule
+actions. Treat them as user-curated free-form labels until a dedicated
+analyzer ships.
 
 **Key notation is policy:** `TKEY` (and Vorbis `INITIALKEY`) **always** receive the standard notation (`Am`, `F#m`, …) per the ID3v2.4 specification. `TXXX:CAMELOTKEY` (and Vorbis `CAMELOTKEY`) **always** receive Camelot Wheel notation (`8A`, `5B`, …). When key analysis is enabled, both frames are written. Don't put Camelot into `TKEY` — third-party players parse it as Roman-numeral and silently mangle.
 
@@ -333,17 +370,34 @@ User can remap any logical field via the `tag_fields` block in `tagger.yaml`.
 
 ### 6.2 Write policy and field-source resolution
 
-`existing_tags_policy` operates on the per-field `TagFieldSource` (see §2), not on the raw on-disk tag. The matrix:
+Two per-dimension knobs govern whether an existing tag is preserved or overwritten:
 
-| `existing_tags_policy` | Field source `Existing` | `Analysis` | `Lookup` | `Rules` |
-|------------------------|------------------------|------------|----------|---------|
-| `skip_if_present`      | preserve               | write      | write    | **write** |
-| `fill_only_empty`      | preserve               | write only if existing is empty | write only if existing is empty | **write** |
-| `always_overwrite`     | write                  | write      | write    | write   |
+- **`min_confidence`** (per analyzer, `analysis.{bpm,key,energy}.min_confidence`): floor for Analyzer output. Below this, the value is dropped *before* the merge runs.
+- **`existing_confidence`** (per dimension, `analysis.{bpm,key,energy}.existing_confidence` and `lookup.existing_confidence`): `[0,1]` floor an Analyzer/Lookup hit must beat to displace an existing tag.
 
-The crucial cell is the bottom-right of the first two rows: **mapping rules always overwrite, regardless of policy.** Rationale: rules are the user's explicit declarative intent — they exist precisely *to* re-tag existing files. A user-defined "House → Electronic" rule that fails to fire because of `skip_if_present` would silently break the user's expectation.
+Decision matrix per field:
 
-Per-dimension `min_confidence` thresholds (see §3) sit *above* this matrix: an analysis or lookup value below threshold is dropped before this table is consulted.
+| Existing | Analyzer/Lookup usable? | Outcome |
+|---|---|---|
+| empty | no | empty, source `Existing` |
+| empty | yes | written, source `Analysis` / `Lookup` |
+| present | no | preserved, source `Existing` |
+| present | yes, confidence > `existing_confidence` | overwritten, source `Analysis` / `Lookup` |
+| present | yes, confidence ≤ `existing_confidence` | preserved, source `Existing` |
+
+Defaults: `existing_confidence: 1.0` everywhere — reproduces classic skip-if-present (analyzer confidences rarely hit exactly 1.0). Set to `0.0` for "always overwrite this dimension" (analyzer wins whenever min_confidence is cleared). Per-dimension independence means BPM can be permissive while Key stays protected.
+
+**Mapping rules (source `Rules`)** always overwrite regardless of `existing_confidence`. Rationale: rules are the user's explicit declarative intent — they exist precisely *to* re-tag existing files. A user-defined "House → Electronic" rule that fails to fire because of `existing_confidence` would silently break the user's expectation.
+
+**Legacy `read.existing_tags_policy`** (removed): the loader strips this key from the YAML, captures the value, and emits a deprecation warning. Migration table:
+
+| Legacy value | Equivalent per-dim setting |
+|---|---|
+| `skip_if_present` | `existing_confidence: 1.0` (default) |
+| `fill_only_empty` | `existing_confidence: 1.0` (was alias of skip_if_present) |
+| `always_overwrite` | `existing_confidence: 0.0` |
+
+**`tagger scan --force-overwrite`**: convenience CLI flag — sets every `existing_confidence` to 0 for one run. `tagger validate` invokes the same override internally so the backtest doesn't measure existing tags passing through.
 
 Backup:
 
@@ -458,6 +512,13 @@ Optionally, `Raycoon.Serilog.Sinks.SQLite` (sibling project) can be enabled in c
 
 - Real-time / watch mode (file-system events).
 - Reading proprietary DJ-app DBs (rekordbox, Serato) — possible later via separate adapters.
-- ML-based genre classification (Essentia models exist, but accuracy on a generic library is poor without per-collection tuning).
 - Mobile or web UI.
 - Mixed In Key API integration (no public API exists at time of writing). Verified MIK-tag-frame round-tripping is a near-term TODO, not a feature claim.
+- Audio-based **mood** and **set-position / energy-curve** analyzers. The
+  fields exist in the domain model and round-trip through the writer; no
+  signal extractor populates them yet.
+
+> ML-based genre classification was previously listed here. It has since
+> shipped — heuristic + 3 TensorFlow voters, opt-in via
+> `analysis.genre_classifier.*`. See `docs/PLAN_GENRE_CLASSIFICATION.md`
+> and CLAUDE.md "Genre Classification (audio-based)".

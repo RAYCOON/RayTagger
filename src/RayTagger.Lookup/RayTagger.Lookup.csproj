@@ -15,4 +15,8 @@
     <ProjectReference Include="..\RayTagger.Core\RayTagger.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="RayTagger.Lookup.Tests" />
+  </ItemGroup>
+
 </Project>

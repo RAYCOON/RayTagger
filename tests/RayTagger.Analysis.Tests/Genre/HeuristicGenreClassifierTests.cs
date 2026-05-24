@@ -93,6 +93,59 @@ public class HeuristicGenreClassifierTests
     }
 
     [Fact]
+    public void Geometric_mean_mode_penalises_weakest_feature_more_than_arithmetic()
+    {
+        // A track at the centre of House's BPM/danceability/loudness profile but with a key
+        // scale that disagrees: arithmetic mean averages it out, geometric mean drops the score
+        // because the weak feature drags the product down.
+        var er = ER(
+            bpm: 123.0,                   // perfect House BPM (centre)
+            keyScale: "major",            // House profile prefers minor (lower score)
+            chordsChangesRate: 0.07,      // mid range
+            spectralCentroid: 2000.0,     // low
+            dynamicComplexity: 4.0,       // mid
+            danceability: 1.5,            // high (>1)
+            beatsLoudness: 0.18);         // crushing — House profile prefers >= 0.14
+
+        var arithmeticScores = HeuristicGenreClassifier.ScoreAll(
+            er, HeuristicScoringMode.ArithmeticMean);
+        var geometricScores = HeuristicGenreClassifier.ScoreAll(
+            er, HeuristicScoringMode.GeometricMean);
+
+        var houseArith = arithmeticScores.Single(s => s.Genre == "House").Confidence;
+        var houseGeom = geometricScores.Single(s => s.Genre == "House").Confidence;
+
+        houseGeom.Should().BeLessThan(houseArith,
+            because: "geometric mean drags the composite down when any single feature is weak");
+    }
+
+    [Fact]
+    public void Geometric_mean_mode_collapses_score_when_one_feature_is_zero()
+    {
+        // BPM way outside any reasonable range → ScoreBpm = 0. Arithmetic mean averages the
+        // zero with the others; geometric mean (with 0.05 floor) drops to ≈ floor.
+        var er = ER(
+            bpm: 50.0,                    // BPM = 0 score for every EDM profile
+            keyScale: "major",
+            chordsChangesRate: 0.07,
+            spectralCentroid: 2500.0,
+            dynamicComplexity: 4.0,
+            danceability: 0.9,
+            beatsLoudness: 0.14);
+
+        var arithmetic = HeuristicGenreClassifier.ScoreAll(er, HeuristicScoringMode.ArithmeticMean);
+        var geometric = HeuristicGenreClassifier.ScoreAll(er, HeuristicScoringMode.GeometricMean);
+
+        var houseArith = arithmetic.Single(s => s.Genre == "House").Confidence;
+        var houseGeom = geometric.Single(s => s.Genre == "House").Confidence;
+
+        houseArith.Should().BeGreaterThan(0.3, because: "averaged with six non-zero features");
+        houseGeom.Should().BeLessThan(houseArith * 0.85,
+            because: "geometric mean must drop noticeably when one feature scores near zero — " +
+                     "the floor (0.05) and the 7-feature shrinkage limit how far the score can fall");
+    }
+
+    [Fact]
     public void Lineup_covers_canonical_taxonomy_genres()
     {
         var scored = HeuristicGenreClassifier.ScoreAll(ER());

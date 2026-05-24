@@ -142,7 +142,8 @@ public class TaggerOptionsLoaderTests
     [Fact]
     public void Genre_classifier_section_defaults_when_missing()
     {
-        // No analysis.genre_classifier block at all → default-constructed POCOs, all flags off.
+        // No analysis.genre_classifier block at all → default-constructed POCOs. Heuristic is
+        // on by default (reuses existing Essentia run, near-zero extra cost). TF models stay off.
         const string yaml = """
             version: 1
             scan:
@@ -152,7 +153,7 @@ public class TaggerOptionsLoaderTests
         var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
 
         var gc = options.Analysis.GenreClassifier;
-        gc.Heuristic.Enabled.Should().BeFalse();
+        gc.Heuristic.Enabled.Should().BeTrue();
         gc.Heuristic.MinConfidence.Should().BeApproximately(0.55, 0.001);
         gc.Tensorflow.GenreElectronic.Enabled.Should().BeFalse();
         gc.Tensorflow.MtgJamendo.Enabled.Should().BeFalse();
@@ -164,6 +165,15 @@ public class TaggerOptionsLoaderTests
         gc.Tensorflow.GenreElectronic.MinConfidence.Should().BeApproximately(0.65, 0.001);
         gc.Tensorflow.MtgJamendo.MinConfidence.Should().BeApproximately(0.50, 0.001);
         gc.Tensorflow.DiscogsEffnet.MinConfidence.Should().BeApproximately(0.50, 0.001);
+
+        // Aggregation defaults: on for mtg_jamendo (87 classes) and discogs_effnet (400 classes)
+        // because both produce diffuse output across sibling sub-buckets of the same parent.
+        // genre_electronic stays off — its 5 classes already correspond to parent-level genres.
+        gc.Tensorflow.GenreElectronic.AggregateTopK.Should().BeFalse();
+        gc.Tensorflow.MtgJamendo.AggregateTopK.Should().BeTrue();
+        gc.Tensorflow.MtgJamendo.AggregateMinTotal.Should().BeApproximately(0.30, 0.001);
+        gc.Tensorflow.DiscogsEffnet.AggregateTopK.Should().BeTrue();
+        gc.Tensorflow.DiscogsEffnet.AggregateMinTotal.Should().BeApproximately(0.25, 0.001);
     }
 
     [Fact]
@@ -633,5 +643,175 @@ public class TaggerOptionsLoaderTests
         ex.Errors.Should().Contain(e =>
             e.YamlPath == $"mapping.source_priority.{field}"
             && e.Reason.Contains("[0, 1000]", StringComparison.Ordinal));
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Legacy existing_tags_policy → per-dimension existing_confidence migration
+    // ---------------------------------------------------------------------------------
+
+    [Fact]
+    public void Legacy_always_overwrite_policy_is_migrated_to_existing_confidence_zero()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            read:
+              existing_tags_policy: always_overwrite
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Analysis.Bpm.ExistingConfidence.Should().Be(0.0);
+        options.Analysis.Key.ExistingConfidence.Should().Be(0.0);
+        options.Analysis.Energy.ExistingConfidence.Should().Be(0.0);
+        options.Lookup.ExistingConfidence.Should().Be(0.0);
+        options.Deprecations.Should().ContainSingle()
+            .Which.Should().Contain("always_overwrite").And.Contain("deprecated");
+    }
+
+    [Fact]
+    public void Legacy_skip_if_present_policy_emits_warning_but_keeps_defaults()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            read:
+              existing_tags_policy: skip_if_present
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        // Defaults are 1.0 already; explicit policy=skip_if_present is a no-op migration.
+        options.Analysis.Bpm.ExistingConfidence.Should().Be(1.0);
+        options.Analysis.Key.ExistingConfidence.Should().Be(1.0);
+        options.Analysis.Energy.ExistingConfidence.Should().Be(1.0);
+        options.Lookup.ExistingConfidence.Should().Be(1.0);
+        options.Deprecations.Should().ContainSingle()
+            .Which.Should().Contain("skip_if_present").And.Contain("deprecated");
+    }
+
+    [Fact]
+    public void Legacy_fill_only_empty_policy_emits_warning_but_keeps_defaults()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            read:
+              existing_tags_policy: fill_only_empty
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Analysis.Bpm.ExistingConfidence.Should().Be(1.0);
+        options.Deprecations.Should().ContainSingle()
+            .Which.Should().Contain("fill_only_empty");
+    }
+
+    [Fact]
+    public void Absent_existing_tags_policy_key_does_not_trigger_deprecation()
+    {
+        // When the user has no `existing_tags_policy` line at all, the migration runs only
+        // up to the "key absent" guard — no warning, no per-dim overrides.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Deprecations.Should().BeEmpty();
+        options.Analysis.Bpm.ExistingConfidence.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void Per_dimension_existing_confidence_works_without_legacy_policy()
+    {
+        // Regression guard for the post-policy world: a config that uses ONLY per-dim
+        // existing_confidence values must load cleanly and emit zero deprecation warnings.
+        // Provider names are required by the validator when the analyzer is enabled.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            analysis:
+              bpm:
+                provider: essentia
+                existing_confidence: 0.0
+              key:
+                provider: essentia
+                existing_confidence: 0.5
+              energy:
+                provider: essentia
+                existing_confidence: 1.0
+            lookup:
+              existing_confidence: 0.7
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        options.Analysis.Bpm.ExistingConfidence.Should().Be(0.0);
+        options.Analysis.Key.ExistingConfidence.Should().Be(0.5);
+        options.Analysis.Energy.ExistingConfidence.Should().Be(1.0);
+        options.Lookup.ExistingConfidence.Should().Be(0.7);
+        options.Deprecations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Legacy_policy_migration_overrides_explicit_existing_confidence_values()
+    {
+        // Documented contract: when BOTH the deprecated policy AND per-dim values are set,
+        // the policy wins (preserves the historical "policy is the master switch" semantic).
+        // The deprecation warning surfaces the conflict — users who want per-dim control must
+        // delete the legacy key.
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            read:
+              existing_tags_policy: always_overwrite
+            analysis:
+              bpm:
+                provider: essentia
+                existing_confidence: 0.8
+              key:
+                provider: essentia
+                existing_confidence: 0.6
+              energy:
+                provider: essentia
+            """;
+
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        // Migration forced all per-dim values to 0.0, including the explicit 0.8 / 0.6 above.
+        options.Analysis.Bpm.ExistingConfidence.Should().Be(0.0);
+        options.Analysis.Key.ExistingConfidence.Should().Be(0.0);
+        options.Deprecations.Should().ContainSingle().Which.Should().Contain("always_overwrite");
+    }
+
+    [Fact]
+    public void Commented_legacy_key_does_not_trigger_migration()
+    {
+        const string yaml = """
+            version: 1
+            scan:
+              source: "~/music"
+            read:
+              # existing_tags_policy: always_overwrite  (kept as reminder)
+              existing_tags_policy: skip_if_present
+            """;
+
+        // The commented-out line should not on its own trigger migration — but the LIVE
+        // skip_if_present line still does. The test guards that the regex only matches mapping
+        // entries (`<whitespace>key:`), not comments.
+        var options = TaggerOptionsLoader.LoadFromString(yaml, RepoRoot.Path);
+
+        // Migration ran for the live key, not the commented one — defaults remain.
+        options.Analysis.Bpm.ExistingConfidence.Should().Be(1.0);
+        options.Deprecations.Should().ContainSingle()
+            .Which.Should().Contain("skip_if_present");
     }
 }

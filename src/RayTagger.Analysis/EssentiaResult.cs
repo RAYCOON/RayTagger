@@ -34,4 +34,10 @@ public sealed record EssentiaResult(
     double? SpectralComplexityMean,
     double? DynamicComplexity,
     double? ChordsChangesRate,
-    double? ChordsStrengthMean);
+    double? ChordsStrengthMean,
+    string? KeyTemperleyKey = null,
+    string? KeyTemperleyScale = null,
+    double? KeyTemperleyStrength = null,
+    string? KeyKrumhanslKey = null,
+    string? KeyKrumhanslScale = null,
+    double? KeyKrumhanslStrength = null);

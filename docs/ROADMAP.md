@@ -95,7 +95,7 @@ Goal: optionally relocate files into a clean library tree.
 
 **Done:** 205 tests green. End-to-end smoke against the 7-track fixture set: scan + write + sort moved every file into `{Electronic|Tech House}/{House|Driving|Peak Time}/{Artist} - {Title}.{ext}`, sidecars travelled along, `raytagger restore` recovered the pre-write tags. Originals untouched (write-test-protocol followed).
 
-## Phase 6 — Avalonia UI (in progress)
+## Phase 6 — Avalonia UI ✅
 
 Goal: cross-platform desktop frontend on top of the same `RayTagger.Core` pipeline.
 
@@ -104,17 +104,66 @@ Goal: cross-platform desktop frontend on top of the same `RayTagger.Core` pipeli
       CLI (own `IHttpClientFactory` registrations with the same Polly resilience pipeline).
 - [x] Folder picker → live scan → results grid with diff (existing vs proposed tags) on a
       dry-run pipeline run. Outcomes stream into an `ObservableCollection` via `Dispatcher.UIThread`.
-- [ ] Rule-set editor with live preview ("if I add this rule, here's what changes").
-- [ ] Apply/revert per row or batch.
-- [ ] Wire analyzers + online lookup (currently `NoopAnalysisRunner` / `NoopLookupRunner`).
-- [ ] Settings panel for tagger.yaml / mappings.yaml (load/save via the existing loaders).
+- [x] Two-stage UI with live SCN-status (`e83f0fa`); Mp3Tag-like compact grid density (`1e798af`).
+- [x] Rule-set editor on AvaloniaEdit with schema validation (`f18a715`), Live-Preview engine
+      with inline diff highlights (`49bd27d`), diff side-panel with jump-to-row (`078c7f1`),
+      "test against file" + bulletproof auto-load (`94a014f`).
+- [x] Apply per Row + Batch Apply All workflow (`ebe2329`); Revert per Row with sidecar restore
+      (`2311457`).
+- [x] Analyzers + online lookup wired (no more `NoopAnalysisRunner` / `NoopLookupRunner`).
+- [x] Column filters + sorting + Camelot view + energy calibration UI + tempo-range fold (`e92b3c9`).
+- [x] BPM snap-to-grid post-step with dark-red UI cue (`ec6094a`).
+- [x] Per-track "API" button → on-demand lookup reuses the same `TaxonomyGenreResolver` (`9073d5c`).
+- [x] AppliedRulesDialog with provider + resolver trace.
+- [x] Source-priority tiers for genre candidate ordering (`8fbeb40`).
+- [x] Specificity-based "best match wins" mapping policy (`b9b5cbf`).
+
+**Done:** UI is feature-complete for the v1 scope. Open follow-ups (Settings-Panel hot-reload,
+watch mode) live in Phase 7.
+
+## Phase 6.5 — Audio-based genre classification ✅
+
+Goal: enrich the genre candidate stream the resolver sees with audio-based voters so tracks
+with empty or mismatched genre tags still resolve cleanly.
+
+- [x] `IGenreClassifier` abstraction + `GenreClassifierRunner` pipeline stage between Lookup
+      and Merge. All defaults off → byte-identical to a classifier-less build.
+- [x] **Tier 3 — `HeuristicGenreClassifier`** (8 parent genres: House/Techno/Trance/DnB/Dubstep/
+      Hip Hop/Ambient/Downtempo). Pure-rule scoring over Essentia DSP descriptors, no extra fork.
+- [x] **Tier 1 — `TensorflowGenreClassifier`** (3 independently togglable models):
+  - `genre_electronic` — 5-class (default `min_confidence: 0.65`).
+  - `mtg_jamendo` — 87-class (default `min_confidence: 0.50`).
+  - `discogs_effnet` — 400-class fine-grained with per-parent aggregation (default `min_confidence: 0.50`).
+- [x] Python helper script `tools/raytagger-genre-classifier/` invoked as subprocess.
+      `pip install essentia-tensorflow` requirement documented in `docs/INSTALL.md`.
+- [x] Model auto-bootstrap via `NativeToolBootstrapper`'s `models:` section in
+      `native-tools.yaml` — SHA-256 pinned, atomic-promote into the cache.
+- [x] Per-parent aggregation (`§4.0c`) — discogs-effnet's 400-class output summed by taxonomy
+      parent, emits synthesised parent candidate with `:aggregated` source suffix.
+- [x] Label normalisation (`ClassifierLabelNormaliser`) + per-model `remap/*.json` (run
+      BEFORE normalisation to handle model-specific abbreviations).
+- [x] Coverage analyser tool at `tools/raytagger-genre-classifier/dev/analyze_remap_coverage.py`.
+- [x] CLI startup banner surfaces cumulative subprocess-cost estimate when ≥1 TF model is active.
+
+**Done:** Documented in `docs/PLAN_GENRE_CLASSIFICATION.md`. Deferred optimisations
+(Python daemon mode, batch mode, file dedup) listed in that doc's §5.7.
 
 ## Phase 7 — Polish
 
-- [ ] Watch mode (file-system events).
-- [ ] AOT single-binary publish for macOS/Linux/Windows in CI.
-- [ ] Persistent run history via `Raycoon.Serilog.Sinks.SQLite`.
-- [ ] Docs: per-provider setup guides with screenshots.
+- [ ] **MIK / DJ-tool round-trip fixtures** — Verify Tagger's `TXXX:CAMELOTKEY` /
+      `TXXX:ENERGYLEVEL` / `TXXX:MOOD` choices interoperate with a current Mixed In Key
+      install. Pending until we have a fixture set.
+- [ ] **Linux/Windows native-tool packaging** — `native-tools.yaml` currently ships macOS-arm64
+      entries only. Add Linux x64 + Windows x64 manifest entries with SHA-256 pins.
+- [ ] **Watch mode** (file-system events; rescan on new file arrival).
+- [ ] **AOT single-binary publish** for macOS/Linux/Windows in CI.
+- [ ] **Genre-classifier follow-ups** — Python daemon mode (avoid per-track subprocess
+      cold-start), batch mode, cross-model file dedup, hyphenated-taxonomy-entry handling
+      (`Lo-fi`). Tracked in `docs/PLAN_GENRE_CLASSIFICATION.md §5.7`.
+- [ ] **Settings-Panel** in UI for live-reloading tagger.yaml / mappings.yaml.
+- [ ] **Persistent run history** via `Raycoon.Serilog.Sinks.SQLite` (sink wired, persistent
+      schema TBD).
+- [ ] **Docs**: per-provider setup guides with screenshots.
 
 ---
 
@@ -122,5 +171,11 @@ Goal: cross-platform desktop frontend on top of the same `RayTagger.Core` pipeli
 
 - **Mixed In Key API integration** — no public API. Whether MIK-produced tags read cleanly depends on which frames the installed MIK version writes; verify on real fixtures before promising compatibility.
 - **rekordbox / Serato library import** — proprietary DB formats; defer to a separate adapter package.
-- **Custom ML genre classifier** — accuracy on a generic library is poor without per-collection training; not worth shipping a 200 MB model. Online metadata lookups solve the genre problem better in practice.
+- **Audio-based mood + set-position analyzers** — the fields exist in the domain model and
+  round-trip through the writer; only mapping rules and existing tags populate them today.
+  Could be added later; not on this roadmap because the heuristic for "mood from audio" is
+  weak, and `set_position` is a DJ-set concept that doesn't have a per-file signal.
 - **Web UI** — Avalonia covers the cross-platform desktop story; web adds hosting/auth concerns disproportionate to the value here.
+
+> ML genre classification was previously listed here as „not worth shipping". It has since
+> shipped — heuristic + 3 TensorFlow voters, opt-in. See Phase 6.5 above.

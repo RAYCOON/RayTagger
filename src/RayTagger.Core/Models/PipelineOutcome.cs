@@ -50,6 +50,13 @@ public sealed record MappingRuleHit(string RuleName, IReadOnlyList<string> Chang
 /// the user sees that the configured range and the detected tempo couldn't be reconciled — the
 /// written value is <c>snap(raw)</c>, the best raw signal available.
 /// </param>
+/// <param name="BpmCrossCheckDelta">
+/// When both an existing BPM tag and a usable analyzer BPM are present, the percent delta
+/// (<c>|existing - analyzer| / existing</c>) — set on every track regardless of which value
+/// won the merge. Null when one of the two is missing. The UI surfaces values &gt; 2 % as a
+/// drift warning (dark-red border) so the user can spot Mixed-In-Key vs Essentia disagreements
+/// before they end up in a mix. See <c>TagMerger</c>'s cross-check logic.
+/// </param>
 public sealed record PipelineOutcome(
     TrackFile File,
     ResolvedTrackTags Resolved,
@@ -60,4 +67,5 @@ public sealed record PipelineOutcome(
     ResolvedTrackTags? PreMapResolved = null,
     TrackTags? ExistingAtScan = null,
     bool BpmWasSnapped = false,
-    bool BpmIsForcedFallback = false);
+    bool BpmIsForcedFallback = false,
+    double? BpmCrossCheckDelta = null);
