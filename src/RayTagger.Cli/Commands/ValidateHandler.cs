@@ -319,8 +319,9 @@ internal static class ValidateHandler
         foreach (var (genre, c) in report.GenreConfusion.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
         {
             var rate = c.Total == 0 ? 0 : (double)c.Matches / c.Total * 100;
+            var truthFolded = BacktestMetrics.NormaliseForCompare(genre);
             var top = c.Predicted
-                .Where(p => !string.Equals(p.Key, genre, StringComparison.OrdinalIgnoreCase))
+                .Where(p => BacktestMetrics.NormaliseForCompare(p.Key) != truthFolded)
                 .OrderByDescending(p => p.Value)
                 .Take(3)
                 .Select(p => $"{p.Key} ({p.Value})");

@@ -29,10 +29,13 @@ public static class BacktestMetrics
 
     /// <summary>
     /// Folds a genre/subgenre label to its canonical compare form: lowercase, whitespace +
-    /// hyphens stripped. "Trip Hop", "TripHop" and "trip-hop" all hash to "triphop".
+    /// hyphens stripped. "Trip Hop", "TripHop" and "trip-hop" all hash to "triphop". Public so
+    /// the validate-report renderer can use the same folding as <see cref="CompareGenre"/> when
+    /// filtering predictions for the confusion-matrix "top mispredictions" column.
     /// </summary>
-    internal static string NormaliseForCompare(string value)
+    public static string NormaliseForCompare(string value)
     {
+        ArgumentNullException.ThrowIfNull(value);
         var sb = new System.Text.StringBuilder(value.Length);
         foreach (var c in value)
         {
