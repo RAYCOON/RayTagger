@@ -18,4 +18,19 @@ public sealed record BacktestTruth(
     double? Bpm,
     string? CamelotKey,
     int? Energy,
-    bool BpmWasCorrected);
+    bool BpmWasCorrected)
+{
+    /// <summary>
+    /// Optional BPM from a secondary truth root (e.g. Virtual DJ's TBPM frame). Used by the
+    /// validate harness when <c>--reference-vdj</c> is supplied — a track is considered a BPM
+    /// match if either the primary (MIK) or secondary (VDJ) truth matches the prediction.
+    /// </summary>
+    public double? SecondaryBpm { get; init; }
+
+    /// <summary>
+    /// Optional Camelot key from a secondary truth root. Standard-notation input (e.g. <c>Ebm</c>)
+    /// is normalised to Camelot via <see cref="Models.KeyNotationConverter"/> before storage so
+    /// enharmonic spellings (Ebm/D#m) collapse to the same Camelot slot.
+    /// </summary>
+    public string? SecondaryCamelotKey { get; init; }
+}

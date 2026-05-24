@@ -19,6 +19,22 @@ public class MixedInKeyCommentParserTests
     }
 
     [Theory]
+    [InlineData("83.00 - Bm - 3", 83.00, "10A", 3)]    // Bm → 10A
+    [InlineData("120.00 - Am - 6", 120.00, "8A", 6)]   // Am → 8A
+    [InlineData("147.89 - Am - 4", 147.89, "8A", 4)]
+    [InlineData("128.00 - F#m - 5", 128.00, "11A", 5)] // F#m → 11A
+    [InlineData("125.00 - Ebm - 6", 125.00, "2A", 6)]  // Ebm → 2A (enharmonic with D#m)
+    [InlineData("120.00 - C - 6", 120.00, "8B", 6)]    // major key
+    public void Parses_standard_notation_key(string comment, double bpm, string camelot, int energy)
+    {
+        var result = MixedInKeyCommentParser.TryParseComment(comment);
+        result.Should().NotBeNull();
+        result!.Bpm.Should().BeApproximately(bpm, 0.001);
+        result.CamelotKey.Should().Be(camelot);
+        result.Energy.Should().Be(energy);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("  ")]

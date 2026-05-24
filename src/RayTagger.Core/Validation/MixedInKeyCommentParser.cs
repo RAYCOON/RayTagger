@@ -1,4 +1,5 @@
 using System.Globalization;
+using RayTagger.Core.Models;
 
 namespace RayTagger.Core.Validation;
 
@@ -47,10 +48,20 @@ public static class MixedInKeyCommentParser
             return null;
         }
 
-        var camelot = parts[1].ToUpperInvariant();
+        // The MIK comment field carries the key in EITHER Camelot ("8A") or Standard ("Am", "F#m",
+        // "Bm") notation depending on the MIK settings the user's library was tagged with —
+        // observed both shapes across this project's reference library. Try Camelot first
+        // (preserves prior behaviour), then fall back to Standard via KeyNotationConverter.
+        var rawKey = parts[1];
+        var camelot = rawKey.ToUpperInvariant();
         if (!IsCamelotKey(camelot))
         {
-            return null;
+            var converted = KeyNotationConverter.FromEither(rawKey, null);
+            if (converted is null)
+            {
+                return null;
+            }
+            camelot = converted.Camelot;
         }
 
         if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var energy))

@@ -33,6 +33,16 @@ internal sealed class ValidateCommandOptions
         DefaultValueFactory = _ => 0,
     };
 
+    public Option<DirectoryInfo?> ReferenceVdj { get; } = new("--reference-vdj")
+    {
+        Description = "Optional secondary truth root with the same relative paths as <reference>, " +
+                      "tagged by a different tool (typically Virtual DJ). When supplied, BPM and Key " +
+                      "are matched against BOTH roots — a track counts as match if EITHER agrees " +
+                      "with the pipeline output. The report's MIK-only / VDJ-only / Both columns " +
+                      "show which truth carried the match. Genre/SubGenre still come from the " +
+                      "primary subfolder structure.",
+    };
+
     public Option<bool> Verbose { get; } = new("--verbose", "-v")
     {
         Description = "Enable debug-level logging for this run.",
@@ -48,7 +58,7 @@ internal sealed class ValidateCommandOptions
             "accuracy. Genre/SubGenre truth from folder structure, BPM/Key/Energy truth from " +
             "Mixed-In-Key comment-tags. Never writes to the reference files.")
         {
-            Reference, Config, Output, Take, Verbose,
+            Reference, Config, Output, Take, ReferenceVdj, Verbose,
         };
         cmd.SetAction(handler);
         return cmd;

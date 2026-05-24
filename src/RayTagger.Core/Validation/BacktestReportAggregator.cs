@@ -19,8 +19,8 @@ public static class BacktestReportAggregator
 
         var genreMetrics = SumOutcomes(files, f => f.Genre);
         var subGenreMetrics = SumOutcomes(files, f => f.SubGenre);
-        var bpmMetrics = SumOutcomes(files, f => f.Bpm);
-        var keyMetrics = SumOutcomes(files, f => f.Key);
+        var bpmMetrics = SumOutcomes(files, f => f.Bpm, f => f.BpmTruthMatch);
+        var keyMetrics = SumOutcomes(files, f => f.Key, f => f.KeyTruthMatch);
         var energyMetrics = SumOutcomes(files, f => f.Energy);
         var confusion = BuildGenreConfusion(files);
         var trace = BuildTraceAggregate(files);
@@ -267,9 +267,11 @@ public static class BacktestReportAggregator
 
     private static DimensionMetrics SumOutcomes(
         IReadOnlyList<BacktestFileResult> files,
-        Func<BacktestFileResult, BacktestComparison> selector)
+        Func<BacktestFileResult, BacktestComparison> selector,
+        Func<BacktestFileResult, TruthMatchSource>? truthMatchSelector = null)
     {
         int match = 0, tol = 0, miss = 0, noPred = 0, noTruth = 0;
+        int primaryOnly = 0, secondaryOnly = 0, both = 0;
         var sourceCounts = new Dictionary<Models.TagFieldSource, int>();
         foreach (var f in files)
         {
@@ -287,8 +289,22 @@ public static class BacktestReportAggregator
                 sourceCounts.TryGetValue(src, out var c);
                 sourceCounts[src] = c + 1;
             }
+            if (truthMatchSelector is not null)
+            {
+                switch (truthMatchSelector(f))
+                {
+                    case TruthMatchSource.Primary: primaryOnly++; break;
+                    case TruthMatchSource.Secondary: secondaryOnly++; break;
+                    case TruthMatchSource.Both: both++; break;
+                }
+            }
         }
-        return new DimensionMetrics(files.Count, match, tol, miss, noPred, noTruth, sourceCounts);
+        return new DimensionMetrics(files.Count, match, tol, miss, noPred, noTruth, sourceCounts)
+        {
+            PrimaryOnlyMatches = primaryOnly,
+            SecondaryOnlyMatches = secondaryOnly,
+            BothMatches = both,
+        };
     }
 
     private static Dictionary<string, GenreConfusion> BuildGenreConfusion(

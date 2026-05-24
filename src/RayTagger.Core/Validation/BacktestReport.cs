@@ -36,7 +36,39 @@ public sealed record BacktestFileResult(
     string? Error,
     IReadOnlyList<Mapping.CandidateTraceEntry>? GenreLookupTrace = null,
     string? WinningGenreSource = null,
-    IReadOnlyList<Pipeline.ClassifierTraceEntry>? ClassifierTrace = null);
+    IReadOnlyList<Pipeline.ClassifierTraceEntry>? ClassifierTrace = null)
+{
+    /// <summary>
+    /// Which truth-root supplied the matching value for BPM. <see cref="TruthMatchSource.Primary"/>
+    /// = matched against the MIK truth only, <see cref="TruthMatchSource.Secondary"/> = matched
+    /// against VDJ (and not MIK), <see cref="TruthMatchSource.Both"/> = both agreed,
+    /// <see cref="TruthMatchSource.None"/> = neither matched (or VDJ not provided). Always
+    /// <see cref="TruthMatchSource.None"/> when <c>--reference-vdj</c> is not used.
+    /// </summary>
+    public TruthMatchSource BpmTruthMatch { get; init; } = TruthMatchSource.None;
+
+    /// <summary>Which truth-root supplied the matching value for Key. See <see cref="BpmTruthMatch"/>.</summary>
+    public TruthMatchSource KeyTruthMatch { get; init; } = TruthMatchSource.None;
+}
+
+/// <summary>
+/// Records which of the two truth roots agreed with the pipeline prediction, used by the
+/// validate harness when a secondary reference (e.g. Tagged_VDJ) is supplied. Primary truth =
+/// MIK (the existing reference); secondary truth = VDJ. The aggregator surfaces the per-source
+/// match counts so the reader can see how many tracks the VDJ truth "rescued" from a primary-only
+/// mismatch (and vice versa).
+/// </summary>
+public enum TruthMatchSource
+{
+    /// <summary>No secondary truth available, or neither truth matched the prediction.</summary>
+    None = 0,
+    /// <summary>Only the primary truth (MIK) matched.</summary>
+    Primary = 1,
+    /// <summary>Only the secondary truth (VDJ) matched — the OR-rule rescue.</summary>
+    Secondary = 2,
+    /// <summary>Both truth roots agreed with the prediction.</summary>
+    Both = 3,
+}
 
 /// <summary>
 /// Cross-file aggregation of the per-track trace data — who-wins-when statistics for providers
@@ -122,6 +154,18 @@ public sealed record DimensionMetrics(
     int NoTruth,
     IReadOnlyDictionary<Models.TagFieldSource, int> SourceCounts)
 {
+    /// <summary>
+    /// Matches resolved by the primary truth only (MIK) when a secondary VDJ truth was also
+    /// evaluated. Zero when <c>--reference-vdj</c> was not supplied.
+    /// </summary>
+    public int PrimaryOnlyMatches { get; init; }
+
+    /// <summary>Matches resolved by the secondary truth only (VDJ) — the OR-rule rescue.</summary>
+    public int SecondaryOnlyMatches { get; init; }
+
+    /// <summary>Matches where both truth roots agreed with the prediction.</summary>
+    public int BothMatches { get; init; }
+
     public static DimensionMetrics Empty { get; } = new(
         0, 0, 0, 0, 0, 0,
         new Dictionary<Models.TagFieldSource, int>());

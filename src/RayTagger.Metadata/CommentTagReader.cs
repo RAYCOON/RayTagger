@@ -57,4 +57,27 @@ public static class CommentTagReader
             return null;
         }
     }
+
+    /// <summary>
+    /// Reads raw BPM and key-string from the file's primary tag frames (TBPM / TKEY on ID3v2,
+    /// BPM / INITIALKEY on Vorbis). Used by the backtest harness for secondary-truth roots
+    /// (e.g. Virtual DJ output) where the per-track metadata sits in tag frames rather than
+    /// a Mixed-In-Key comment string. Returns (null, null) for any read failure.
+    /// </summary>
+    public static (double? Bpm, string? Key) ReadBpmKey(string filePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+
+        try
+        {
+            using var tagFile = TagLib.File.Create(filePath);
+            var tag = tagFile.Tag;
+            double? bpm = tag.BeatsPerMinute > 0 ? tag.BeatsPerMinute : null;
+            var key = string.IsNullOrWhiteSpace(tag.InitialKey) ? null : tag.InitialKey;
+            return (bpm, key);
+        }
+        catch (CorruptFileException) { return (null, null); }
+        catch (UnsupportedFormatException) { return (null, null); }
+        catch (IOException) { return (null, null); }
+    }
 }

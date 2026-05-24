@@ -40,6 +40,7 @@ internal static class ValidateHandler
         var configFile = parseResult.GetValue(opts.Config);
         var outputOverride = parseResult.GetValue(opts.Output);
         var take = parseResult.GetValue(opts.Take);
+        var referenceVdjArg = parseResult.GetValue(opts.ReferenceVdj);
         var verbose = parseResult.GetValue(opts.Verbose);
 
         var console = AnsiConsole.Console;
@@ -48,6 +49,13 @@ internal static class ValidateHandler
         {
             console.MarkupLine(
                 $"[red]Reference folder not found:[/] {Markup.Escape(referenceArg?.FullName ?? "(none)")}");
+            return ExitCodes.InvalidArguments;
+        }
+
+        if (referenceVdjArg is not null && !referenceVdjArg.Exists)
+        {
+            console.MarkupLine(
+                $"[red]Secondary VDJ reference folder not found:[/] {Markup.Escape(referenceVdjArg.FullName)}");
             return ExitCodes.InvalidArguments;
         }
 
@@ -125,7 +133,7 @@ internal static class ValidateHandler
                         if (take > 0 && processed >= take) break;
                         processed++;
 
-                        var fileResult = Compare(referenceArg.FullName, outcome);
+                        var fileResult = Compare(referenceArg.FullName, referenceVdjArg?.FullName, outcome);
                         fileResults.Add(fileResult);
 
                         task.Description = $"[green]Comparing[/] [grey]({processed} files done)[/]";
@@ -174,10 +182,28 @@ internal static class ValidateHandler
         return ExitCodes.Success;
     }
 
-    private static BacktestFileResult Compare(string referenceRoot, PipelineOutcome outcome)
+    private static BacktestFileResult Compare(string referenceRoot, string? secondaryRoot, PipelineOutcome outcome)
     {
         var comment = CommentTagReader.Read(outcome.File.Path);
         var truth = BacktestTruthExtractor.Extract(referenceRoot, outcome.File.Path, comment);
+
+        // Resolve secondary-root truth if --reference-vdj was supplied. The parallel file sits at
+        // the same relative path under the secondary root; we read TBPM and TKEY frames directly
+        // (VDJ doesn't use the MIK comment format). Standard-notation TKEY values like "Ebm" get
+        // normalised to Camelot here so enharmonic spellings collapse onto the same wheel slot.
+        if (secondaryRoot is not null)
+        {
+            var secondaryPath = ResolveSecondaryPath(referenceRoot, secondaryRoot, outcome.File.Path);
+            if (secondaryPath is not null && File.Exists(secondaryPath))
+            {
+                var (secBpm, secKeyRaw) = CommentTagReader.ReadBpmKey(secondaryPath);
+                var secCamelot = string.IsNullOrWhiteSpace(secKeyRaw)
+                    ? null
+                    : RayTagger.Core.Models.KeyNotationConverter.FromEither(secKeyRaw, null)?.Camelot;
+                truth = truth with { SecondaryBpm = secBpm, SecondaryCamelotKey = secCamelot };
+            }
+        }
+
         var resolved = outcome.Resolved;
 
         var error = outcome.Errors.Count > 0
@@ -199,17 +225,51 @@ internal static class ValidateHandler
             }
         }
 
+        var bpmPrimary = BacktestMetrics.CompareBpm(truth.Bpm, resolved.Bpm.Value, resolved.Bpm.Source);
+        var bpmSecondary = truth.SecondaryBpm is not null
+            ? BacktestMetrics.CompareBpm(truth.SecondaryBpm, resolved.Bpm.Value, resolved.Bpm.Source)
+            : null;
+        var (bpmCombined, bpmMatchedBy) = BacktestMetrics.PromoteWithSecondary(bpmPrimary, bpmSecondary);
+
+        var keyPrimary = BacktestMetrics.CompareKey(truth.CamelotKey, resolved.Key.Value, resolved.Key.Source);
+        var keySecondary = truth.SecondaryCamelotKey is not null
+            ? BacktestMetrics.CompareKey(truth.SecondaryCamelotKey, resolved.Key.Value, resolved.Key.Source)
+            : null;
+        var (keyCombined, keyMatchedBy) = BacktestMetrics.PromoteWithSecondary(keyPrimary, keySecondary);
+
         return new BacktestFileResult(
             Truth: truth,
             Genre: BacktestMetrics.CompareGenre(truth.Genre, resolved.Genre.Value, resolved.Genre.Source),
             SubGenre: BacktestMetrics.CompareSubGenre(truth.SubGenre, resolved.SubGenre.Value, resolved.SubGenre.Source),
-            Bpm: BacktestMetrics.CompareBpm(truth.Bpm, resolved.Bpm.Value, resolved.Bpm.Source),
-            Key: BacktestMetrics.CompareKey(truth.CamelotKey, resolved.Key.Value, resolved.Key.Source),
+            Bpm: bpmCombined,
+            Key: keyCombined,
             Energy: BacktestMetrics.CompareEnergy(truth.Energy, resolved.Energy.Value, resolved.Energy.Source),
             Error: error,
             GenreLookupTrace: trace,
             WinningGenreSource: winningSource,
-            ClassifierTrace: resolved.ClassifierTrace);
+            ClassifierTrace: resolved.ClassifierTrace)
+        {
+            BpmTruthMatch = bpmMatchedBy,
+            KeyTruthMatch = keyMatchedBy,
+        };
+    }
+
+    /// <summary>
+    /// Maps a primary-root file path to its sibling under the secondary root by replacing the
+    /// reference-root prefix. Returns null when the primary path does not actually sit under the
+    /// primary root (defensive — the pipeline always enumerates from there, so this should not
+    /// fire in practice).
+    /// </summary>
+    private static string? ResolveSecondaryPath(string primaryRoot, string secondaryRoot, string primaryFilePath)
+    {
+        var normPrim = Path.GetFullPath(primaryRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normFile = Path.GetFullPath(primaryFilePath);
+        if (!normFile.StartsWith(normPrim + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var relative = normFile[(normPrim.Length + 1)..];
+        return Path.Combine(Path.GetFullPath(secondaryRoot), relative);
     }
 
     private static (TaggerOptions Options, MappingRuleSet Rules) LoadConfiguration(FileInfo? configFile)
@@ -224,6 +284,12 @@ internal static class ValidateHandler
 
     private static void RenderSummary(IAnsiConsole console, BacktestReport report)
     {
+        // Show the truth-match column when secondary-truth was actually used. Detect that by
+        // looking at any dimension's total of "matched by anyone" counters — they're all zero
+        // when --reference-vdj wasn't supplied.
+        var hasSecondary = report.BpmMetrics.PrimaryOnlyMatches + report.BpmMetrics.SecondaryOnlyMatches + report.BpmMetrics.BothMatches > 0
+                        || report.KeyMetrics.PrimaryOnlyMatches + report.KeyMetrics.SecondaryOnlyMatches + report.KeyMetrics.BothMatches > 0;
+
         var table = new Table()
             .AddColumn("Dimension")
             .AddColumn("Total")
@@ -235,6 +301,10 @@ internal static class ValidateHandler
             .AddColumn("Exact %")
             .AddColumn("Tol %")
             .AddColumn("Sources");
+        if (hasSecondary)
+        {
+            table.AddColumn("MIK-only").AddColumn("VDJ-only").AddColumn("Both");
+        }
 
         Row("Genre", report.GenreMetrics);
         Row("SubGenre", report.SubGenreMetrics);
@@ -246,7 +316,8 @@ internal static class ValidateHandler
 
         void Row(string name, DimensionMetrics m)
         {
-            table.AddRow(
+            var cells = new List<string>
+            {
                 name,
                 m.Total.ToString(),
                 m.Evaluable.ToString(),
@@ -256,7 +327,18 @@ internal static class ValidateHandler
                 m.NoPrediction.ToString(),
                 $"{m.ExactMatchRate * 100:F1}",
                 $"{m.ToleranceMatchRate * 100:F1}",
-                FormatSources(m.SourceCounts));
+                FormatSources(m.SourceCounts),
+            };
+            if (hasSecondary)
+            {
+                // Only BPM and Key rows carry truth-match counts; other rows get blanks so the
+                // table grid stays aligned without misleading zeros.
+                var supports = name is "BPM" or "Key";
+                cells.Add(supports ? m.PrimaryOnlyMatches.ToString() : "—");
+                cells.Add(supports ? m.SecondaryOnlyMatches.ToString() : "—");
+                cells.Add(supports ? m.BothMatches.ToString() : "—");
+            }
+            table.AddRow([.. cells]);
         }
     }
 
@@ -296,21 +378,38 @@ internal static class ValidateHandler
         sb.AppendLine($"Reference: `{report.ReferenceRoot}`  ");
         sb.AppendLine($"Files: **{report.Files.Count}**");
         sb.AppendLine();
+        var hasSecondary = report.BpmMetrics.PrimaryOnlyMatches + report.BpmMetrics.SecondaryOnlyMatches + report.BpmMetrics.BothMatches > 0
+                        || report.KeyMetrics.PrimaryOnlyMatches + report.KeyMetrics.SecondaryOnlyMatches + report.KeyMetrics.BothMatches > 0;
+
         sb.AppendLine("## Per-Dimension Metrics");
         sb.AppendLine();
-        sb.AppendLine("| Dimension | Total | Evaluable | Match | Tol | Miss | NoPred | Exact % | Tol % | Sources |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
-        AppendMetric(sb, "Genre", report.GenreMetrics);
-        AppendMetric(sb, "SubGenre", report.SubGenreMetrics);
-        AppendMetric(sb, "BPM", report.BpmMetrics);
-        AppendMetric(sb, "Key", report.KeyMetrics);
-        AppendMetric(sb, "Energy", report.EnergyMetrics);
+        if (hasSecondary)
+        {
+            sb.AppendLine("| Dimension | Total | Evaluable | Match | Tol | Miss | NoPred | Exact % | Tol % | Sources | MIK-only | VDJ-only | Both |");
+            sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+        }
+        else
+        {
+            sb.AppendLine("| Dimension | Total | Evaluable | Match | Tol | Miss | NoPred | Exact % | Tol % | Sources |");
+            sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
+        }
+        AppendMetric(sb, "Genre", report.GenreMetrics, hasSecondary, supportsTruthSplit: false);
+        AppendMetric(sb, "SubGenre", report.SubGenreMetrics, hasSecondary, supportsTruthSplit: false);
+        AppendMetric(sb, "BPM", report.BpmMetrics, hasSecondary, supportsTruthSplit: true);
+        AppendMetric(sb, "Key", report.KeyMetrics, hasSecondary, supportsTruthSplit: true);
+        AppendMetric(sb, "Energy", report.EnergyMetrics, hasSecondary, supportsTruthSplit: false);
         sb.AppendLine();
         sb.AppendLine("> **Sources column**: which pipeline stage produced the prediction.");
         sb.AppendLine("> `Analysis` = audio analyzer (Essentia BPM/Key/Energy or heuristic), `Lookup` = online provider, ");
         sb.AppendLine("> `Rules` = mapping rule `set:` block, `Existing` = tag was already on file. The backtest forces");
         sb.AppendLine("> every `existing_confidence` to 0 so most rows should NOT be `Existing` — when they are,");
         sb.AppendLine("> the analyzer/lookup stage didn't produce anything and the existing tag passed through unmasked.");
+        if (hasSecondary)
+        {
+            sb.AppendLine("> **MIK-only / VDJ-only / Both** (BPM and Key rows only): how each match was reached.");
+            sb.AppendLine("> Track is counted as match if EITHER MIK or VDJ truth agrees with the prediction (OR-rule).");
+            sb.AppendLine("> `MIK-only` = MIK matched, VDJ didn't · `VDJ-only` = VDJ rescued · `Both` = unanimous.");
+        }
         sb.AppendLine();
         sb.AppendLine("## Genre Confusion (per truth-genre)");
         sb.AppendLine();
@@ -333,12 +432,21 @@ internal static class ValidateHandler
         AppendBpmDistributionSection(sb, report.BpmByGenre);
         return sb.ToString();
 
-        static void AppendMetric(System.Text.StringBuilder sb, string name, DimensionMetrics m)
+        static void AppendMetric(System.Text.StringBuilder sb, string name, DimensionMetrics m, bool hasSecondary, bool supportsTruthSplit)
         {
-            sb.AppendLine(
+            var core =
                 $"| {name} | {m.Total} | {m.Evaluable} | {m.Matches} | {m.ToleranceMatches} | " +
                 $"{m.Mismatches} | {m.NoPrediction} | {m.ExactMatchRate * 100:F1} | " +
-                $"{m.ToleranceMatchRate * 100:F1} | {FormatSources(m.SourceCounts)} |");
+                $"{m.ToleranceMatchRate * 100:F1} | {FormatSources(m.SourceCounts)} |";
+            if (!hasSecondary)
+            {
+                sb.AppendLine(core);
+                return;
+            }
+            var primary = supportsTruthSplit ? m.PrimaryOnlyMatches.ToString() : "—";
+            var secondary = supportsTruthSplit ? m.SecondaryOnlyMatches.ToString() : "—";
+            var both = supportsTruthSplit ? m.BothMatches.ToString() : "—";
+            sb.AppendLine($"{core} {primary} | {secondary} | {both} |");
         }
     }
 

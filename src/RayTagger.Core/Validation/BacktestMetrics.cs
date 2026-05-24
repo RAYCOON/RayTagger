@@ -110,6 +110,53 @@ public static class BacktestMetrics
     }
 
     /// <summary>
+    /// Merges a primary and an optional secondary <see cref="BacktestComparison"/> with OR-logic:
+    /// the result carries the BEST outcome of the two (Match &gt; ToleranceMatch &gt; Mismatch &gt;
+    /// NoPrediction &gt; NoTruth) and a <see cref="TruthMatchSource"/> flag indicating which side
+    /// (or both) actually matched the prediction. Used by the validate harness when a secondary
+    /// truth root (e.g. Tagged_VDJ) is supplied so a track is counted as "match" if either truth
+    /// agrees with the pipeline output.
+    /// </summary>
+    public static (BacktestComparison Combined, TruthMatchSource MatchedBy) PromoteWithSecondary(
+        BacktestComparison primary, BacktestComparison? secondary)
+    {
+        ArgumentNullException.ThrowIfNull(primary);
+
+        if (secondary is null)
+        {
+            var matched = IsMatchedOutcome(primary.Outcome) ? TruthMatchSource.Primary : TruthMatchSource.None;
+            return (primary, matched);
+        }
+
+        var pRank = OutcomeRank(primary.Outcome);
+        var sRank = OutcomeRank(secondary.Outcome);
+        var combined = sRank > pRank ? secondary : primary;
+
+        var pMatched = IsMatchedOutcome(primary.Outcome);
+        var sMatched = IsMatchedOutcome(secondary.Outcome);
+        var by = (pMatched, sMatched) switch
+        {
+            (true, true) => TruthMatchSource.Both,
+            (true, false) => TruthMatchSource.Primary,
+            (false, true) => TruthMatchSource.Secondary,
+            _ => TruthMatchSource.None,
+        };
+        return (combined, by);
+    }
+
+    private static int OutcomeRank(BacktestOutcome outcome) => outcome switch
+    {
+        BacktestOutcome.Match => 4,
+        BacktestOutcome.ToleranceMatch => 3,
+        BacktestOutcome.Mismatch => 2,
+        BacktestOutcome.NoPrediction => 1,
+        _ => 0,
+    };
+
+    private static bool IsMatchedOutcome(BacktestOutcome outcome) =>
+        outcome is BacktestOutcome.Match or BacktestOutcome.ToleranceMatch;
+
+    /// <summary>
     /// Energy match within ±1 bucket — truth comes from MIK comment, prediction from the pipeline.
     /// Used for diagnostic reporting only; energy tuning is out-of-scope.
     /// </summary>

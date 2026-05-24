@@ -168,4 +168,56 @@ public class BacktestMetricsTests
         var r = BacktestMetrics.CompareEnergy(6, 9);
         r.Outcome.Should().Be(BacktestOutcome.Mismatch);
     }
+
+    [Fact]
+    public void Promote_no_secondary_returns_primary_with_primary_match_flag()
+    {
+        var primary = BacktestMetrics.CompareBpm(120.0, 120.0);
+        var (combined, by) = BacktestMetrics.PromoteWithSecondary(primary, secondary: null);
+        combined.Outcome.Should().Be(BacktestOutcome.Match);
+        by.Should().Be(TruthMatchSource.Primary);
+    }
+
+    [Fact]
+    public void Promote_no_secondary_with_primary_mismatch_returns_none()
+    {
+        var primary = BacktestMetrics.CompareBpm(120.0, 90.0);
+        var (combined, by) = BacktestMetrics.PromoteWithSecondary(primary, secondary: null);
+        combined.Outcome.Should().Be(BacktestOutcome.Mismatch);
+        by.Should().Be(TruthMatchSource.None);
+    }
+
+    [Fact]
+    public void Promote_secondary_rescues_primary_mismatch()
+    {
+        // Pick truths whose ratio is not exactly half/double, so CompareBpm against the primary
+        // really yields Mismatch (not the built-in ToleranceMatch half-time fallback).
+        var mik = BacktestMetrics.CompareBpm(120.0, 80.0);  // 1.5 ratio — no half/double rescue
+        var vdj = BacktestMetrics.CompareBpm(80.0, 80.0);
+        var (combined, by) = BacktestMetrics.PromoteWithSecondary(mik, vdj);
+        combined.Outcome.Should().Be(BacktestOutcome.Match);
+        by.Should().Be(TruthMatchSource.Secondary);
+    }
+
+    [Fact]
+    public void Promote_both_match_reports_both()
+    {
+        var mik = BacktestMetrics.CompareKey("8A", new MusicalKey("Am", "8A"));
+        var vdj = BacktestMetrics.CompareKey("8A", new MusicalKey("Am", "8A"));
+        var (combined, by) = BacktestMetrics.PromoteWithSecondary(mik, vdj);
+        combined.Outcome.Should().Be(BacktestOutcome.Match);
+        by.Should().Be(TruthMatchSource.Both);
+    }
+
+    [Fact]
+    public void Promote_picks_better_outcome_when_both_imperfect()
+    {
+        // MIK mismatches outright, VDJ is a Camelot-neighbour tolerance match — combined returns
+        // the better outcome (tolerance) and credits the secondary truth.
+        var mik = BacktestMetrics.CompareKey("8A", new MusicalKey("D", "10B"));
+        var vdj = BacktestMetrics.CompareKey("8A", new MusicalKey("Em", "9A"));
+        var (combined, by) = BacktestMetrics.PromoteWithSecondary(mik, vdj);
+        combined.Outcome.Should().Be(BacktestOutcome.ToleranceMatch);
+        by.Should().Be(TruthMatchSource.Secondary);
+    }
 }
