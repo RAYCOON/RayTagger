@@ -55,6 +55,37 @@ rules:
     on_match: continue
 
   # ---------------------------------------------------------------------------
+  # 1b. Crossover-Genres → Reggae/Dancehall. Hierarchische Provider-/Classifier-
+  #     Outputs wie "Electronic---Moombahton" werden im Resolver nicht gegen die
+  #     taxonomy.normalise-Aliase abgeglichen (nur exact-genre-string-Match).
+  #     Diese expliziten Regex-Rules fangen sie ab. `on_match: continue` damit
+  #     spätere Set-Position/Mood-Rules weiter feuern können.
+  # ---------------------------------------------------------------------------
+  - name: "Moombahton crossover → Reggae/Dancehall"
+    when:
+      genre_regex: "(?i)Moom[bp]a[t]?hon"     # Moombahton, Moombathon
+    set:
+      genre: "Reggae"
+      subgenre: "Dancehall"
+    on_match: continue
+
+  - name: "Dub Reggae crossover → Reggae/Dancehall"
+    when:
+      genre_regex: "(?i)Dub[\\s-]Reggae"      # Dub Reggae, Dub-Reggae
+    set:
+      genre: "Reggae"
+      subgenre: "Dancehall"
+    on_match: continue
+
+  - name: "Ragga → Reggae/Dancehall"
+    when:
+      genre_regex: "(?i)\\bRagga\\b"          # word-boundary guards against partials
+    set:
+      genre: "Reggae"
+      subgenre: "Dancehall"
+    on_match: continue
+
+  # ---------------------------------------------------------------------------
   # 2. BPM-Transformationen — DJ-Konvention double/half-time. Greift dort, wo
   #    der Analyzer im falschen Octave gelandet ist und auf die Genre-typische
   #    Range zurückgeholt werden muss.

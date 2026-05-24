@@ -113,7 +113,8 @@ analysis:
       disco:          { min: 100, max: 125 }
       hardstyle:      { min: 140, max: 180 }
       garage:         { min: 125, max: 140 }
-      reggaeton:      { min: 85,  max: 100 }
+      reggae:         { min: 80,  max: 140 }   # covers Roots/Rocksteady/Ska/Dancehall/Moombahton/Dub
+      reggaeton:      { min: 85,  max: 105 }   # dembow ~96, Latin-Trap headroom
 
     # Fallback range when the genre matches none of the above (or when a track has no genre tag).
     # null = no fold attempted; raw Essentia value passes through with only the snap-to-grid pass.
