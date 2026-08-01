@@ -47,7 +47,7 @@ tools:
   # `essentia_streaming_extractor_music` when moving into the cache slot,
   # so the bare-name probe / setup workflow keeps working.
   essentia_streaming_extractor_music:
-    version: "master-20260416-7e90d20b"
+    version: "master-20260520-b9fa6cb6"
     sources:
       osx-x64:
         url: "https://essentia.upf.edu/extractors/essentia-extractors-v2.1_beta2-osx-x86_64.tar.gz"
@@ -55,8 +55,8 @@ tools:
         archive_format: tar_gz
         binary_path: "essentia-extractors-v2.1_beta2/streaming_extractor_music"
       linux-x64:
-        url: "https://github.com/RAYCOON/raytagger/releases/download/essentia-tools-20260416/essentia-20260416-7e90d20b-linux-x64.tar.gz"
-        sha256: "28b877109b1d8031b07282ef635218796dd6532b87dc1d50feb828aabfbf8342"
+        url: "https://github.com/RAYCOON/RayTagger/releases/download/essentia-tools-20260520/essentia-20260520-b9fa6cb6-linux-x64.tar.gz"
+        sha256: "9368139779fc57ca548a475429e23d6f3d314020b281ba289a7f55d55c00a4ef"
         archive_format: tar_gz
         binary_path: "essentia_streaming_extractor_music"
       # Windows note: upstream only publishes a 32-bit (i686) build. It
@@ -65,8 +65,8 @@ tools:
       # have a self-built native 64-bit essentia_streaming_extractor_music.exe,
       # host it on your own mirror and override the win-x64 entry here.
       win-x64:
-        url: "https://github.com/RAYCOON/raytagger/releases/download/essentia-tools-20260416/essentia-20260416-7e90d20b-win-x64.tar.gz"
-        sha256: "775a9ba6d883cd2125713e9179da91e8b86478ebb787c4d8466b8aa88599710f"
+        url: "https://github.com/RAYCOON/RayTagger/releases/download/essentia-tools-20260520/essentia-20260520-b9fa6cb6-win-x64.tar.gz"
+        sha256: "55e9400c1dfbbf0fc6477542a4732ec0b263561b00216412ddc7ebf592539cb8"
         archive_format: tar_gz
         binary_path: "essentia_streaming_extractor_music.exe"
       win-x86:
@@ -83,8 +83,8 @@ tools:
       # source (docs/INSTALL.md) or duplicate the osx-x64 entry here so
       # the x86_64 build runs under Rosetta.
       osx-arm64:
-        url: "https://github.com/RAYCOON/raytagger/releases/download/essentia-tools-20260416/essentia-20260416-7e90d20b-osx-arm64.tar.gz"
-        sha256: "b4b4ec514e0ee034c9b12d7a0c78e2642204ad5788442892a3e24435c42eba3f"
+        url: "https://github.com/RAYCOON/RayTagger/releases/download/essentia-tools-20260520/essentia-20260520-b9fa6cb6-osx-arm64.tar.gz"
+        sha256: "145ac49b49e98909fc7b3a0fdc4410e40f4274647579c5a7c4dd2505ca3f259d"
         archive_format: tar_gz
         binary_path: "essentia_streaming_extractor_music"
       #
